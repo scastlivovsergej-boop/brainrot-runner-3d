@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Brainrot Runner 3D</title>
+<link rel="stylesheet" href="style.css?v=101">
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud"></div>
+
+<div id="rightHud">
+  <div id="speedChip"></div>
+  <div class="hud-buttons">
+    <button id="btnPad">🏠 +1 Пэд</button>
+  </div>
+    <button id="btnPrestige" style="display:none">⭐ Престиж</button>
+  <div id="speedSwitch">
+    <div class="ss-row">
+      <label>Скорость:</label>
+      <button id="ssNormal">100%</button>
+      <button id="ssCustom">Своя</button>
+    </div>
+    <div id="ssSliderWrap">
+      <input type="range" id="ssSlider" min="0" max="150" value="150">
+      <span id="ssSliderVal">150%</span>
+    </div>
+  </div>
+  <div id="board"></div>
+</div>
+
+<div id="actionWrap">
+  <div id="actionLabel"></div>
+  <div id="actionBar"><div id="actionFill"></div></div>
+</div>
+
+
+
+
+<div id="chatLog"></div>
+<div id="chatInputWrap">
+  <span id="chatPrefix">&gt;</span>
+  <input id="chatInput" maxlength="200" autocomplete="off" placeholder="Сообщение... (Enter — отправить, Esc — отмена)">
+</div>
+
+<button id="settingsBtn" title="Настройки">⚙</button>
+
+<!-- МАГАЗИН -->
+<div id="shopModal" class="modal-back">
+  <div class="shop-inner">
+    <div class="modal-close" id="shopClose">✕</div>
+    <h2>🏪 Магазин скорости</h2>
+    <div class="shop-hint">Сейчас: <b id="shopSpeedVal">100%</b></div>
+    <div class="shop-grid">
+      <div class="shop-card" data-kind="1">
+        <div class="sc-title">+1%</div>
+        <div class="sc-price" id="scp1">100💰</div>
+        <button class="sc-btn" data-kind="1">Купить</button>
+      </div>
+      <div class="shop-card" data-kind="5">
+        <div class="sc-title">+5%</div>
+        <div class="sc-price" id="scp5">500💰</div>
+        <button class="sc-btn" data-kind="5">Купить</button>
+      </div>
+      <div class="shop-card" data-kind="10">
+        <div class="sc-title">+10%</div>
+        <div class="sc-price" id="scp10">1000💰</div>
+        <button class="sc-btn" data-kind="10">Купить</button>
+      </div>
+    </div>
+    <div class="shop-hint" style="opacity:0.5;font-size:12px;margin-top:14px">Клик вне окна или ✕ — закрыть</div>
+  </div>
+</div>
+
+<!-- АВТОРИЗАЦИЯ -->
+<div id="authModal" class="modal-back active">
+  <div class="modal-inner">
+    <h2>🎮 Вход в игру</h2>
+    <div class="auth-tabs">
+      <div class="auth-tab active" data-tab="login" id="tabLogin">Вход</div>
+      <div class="auth-tab" data-tab="register" id="tabRegister">Регистрация</div>
+    </div>
+    <div class="auth-field">
+      <label>Ник</label>
+      <input id="authNick" maxlength="20" autocomplete="off" placeholder="Введи ник">
+    </div>
+    <div class="auth-field">
+      <label>Пароль</label>
+      <div class="auth-pass-wrap">
+        <input id="authPass" type="password" maxlength="40" placeholder="Введи пароль">
+        <button type="button" id="authTogglePass" class="pass-toggle">👁</button>
+      </div>
+    </div>
+    <div id="authErr" class="auth-err"></div>
+    <button type="button" class="auth-submit" id="authSubmit">Войти</button>
+  </div>
+</div>
+
+<!-- НАСТРОЙКИ -->
+<div id="settingsModal" class="modal-back">
+  <div class="modal-inner">
+    <div class="modal-close" id="settingsClose">✕</div>
+    <h2>⚙ Настройки</h2>
+    <div class="set-row">
+      <label>Показывать чат</label>
+      <input type="checkbox" id="setChatOn" checked>
+    </div>
+    <div class="set-row">
+      <label>Длительность (сек): <b id="setDurVal">10</b></label>
+      <input type="range" id="setDur" min="3" max="30" value="10">
+    </div>
+    <div class="set-row">
+      <label>Чат над головой</label>
+      <input type="checkbox" id="setChatHead" checked>
+    </div>
+    <hr>
+    <div class="set-title">Управление</div>
+    <div class="set-help">
+      <b>WASD</b> — движение<br>
+      <b>SPACE</b> — прыжок<br>
+      <b>ПКМ</b> — обзор<br>
+      <b>E</b> (зажать) — подобрать / магазин у NPC<br>
+      <b>D</b> (зажать) — удалить верити<br>
+      <b>T</b> — чат
+    </div>
+  </div>
+</div>
+
+<!-- АДМИНКА -->
+<div id="adminModal" class="modal-back">
+  <div class="modal-inner">
+    <div class="modal-close" id="adminClose">✕</div>
+    <h2>🛡 Админ-панель</h2>
+    <div id="adminAuthBox">
+      <div class="auth-field">
+        <label>Пароль администратора</label>
+        <div class="auth-pass-wrap">
+          <input id="adminPass" type="password" placeholder="Пароль">
+          <button type="button" id="adminTogglePass" class="pass-toggle">👁</button>
+        </div>
+      </div>
+      <div id="adminErr" class="auth-err"></div>
+      <button type="button" class="auth-submit" id="adminSubmit">Войти</button>
+    </div>
+    <div id="adminPanel" style="display:none">
+      <div class="admin-row">
+        <label>Игрок (ник):</label>
+        <input id="admNick" placeholder="Ник игрока">
+        <button id="admLoad">📥</button>
+      </div>
+      <div class="admin-row">
+        <label>Деньги:</label>
+        <input id="admMoney" type="number" value="0">
+        <button onclick="admCmd('money')">OK</button>
+      </div>
+      <div class="admin-row">
+        <label>Бонус/сек:</label>
+        <input id="admInc" type="number" value="0">
+        <button onclick="admCmd('income_bonus')">OK</button>
+      </div>
+      <div class="admin-row">
+        <label>Скорость %:</label>
+        <input id="admSpeed" type="number" value="0">
+        <button onclick="admCmd('speed')">OK</button>
+      </div>
+      <div class="admin-row">
+        <label>Новый пароль:</label>
+        <input id="admPass" type="text" placeholder="новый пароль" maxlength="40">
+        <button onclick="admCmd('set_password')">🔑</button>
+      </div>
+      <div class="admin-row">
+        <label>Сброс игрока:</label>
+        <button onclick="admCmd('reset_player')" style="background:linear-gradient(180deg,#e74c3c,#c0392b);box-shadow:0 2px 0 #922b21">🗑 СБРОСИТЬ ВСЁ</button>
+      </div>
+      <div class="admin-row">
+        <label>Кол-во пэдов:</label>
+        <input id="admSlots" type="number" value="10" min="10" max="50">
+        <button onclick="admCmd('slots')">OK</button>
+      </div>
+      <div class="admin-row">
+        <label>Пэд #:</label>
+        <input id="admPad" type="number" value="0">
+      </div>
+      <div class="admin-row">
+        <label>Знач. / Доход:</label>
+        <input id="admPadVal" type="number" value="100">
+        <input id="admPadInc" type="number" value="20">
+        <button onclick="admCmd('pad')">OK</button>
+        <button onclick="admCmd('pad_clear')">🗑</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="prestigeModal" class="modal-back">
+  <div class="modal-inner">
+    <div class="modal-close" id="prestigeClose">✕</div>
+    <h2>⭐ Престиж</h2>
+    <div id="prestigeInfo" style="text-align:left;font-size:14px;line-height:1.9;margin:16px 0"></div>
+    <button id="prestigeConfirmBtn" class="auth-submit" style="margin-top:10px">Подтвердить</button>
+  </div>
+</div>
+
+<div id="toasts"></div>
+<div id="flash"></div>
+<div id="hitMsg">💥 Отбросило!</div>
+
+<script type="module" src="game.js?v=101"></script>
+</body>
+</html>
