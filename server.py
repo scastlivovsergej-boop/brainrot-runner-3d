@@ -1,3 +1,6 @@
+from gevent import monkey
+monkey.patch_all()
+
 import random, threading, time, os, json, hashlib
 from flask import Flask, request
 from flask_socketio import SocketIO
