@@ -1,9 +1,16 @@
 from gevent import monkey
 monkey.patch_all()
 
+from psycogreen.gevent import patch_psycopg
+patch_psycopg()
+
 import random, threading, time, os, json, hashlib
+import psycopg2
+from psycopg2.extras import Json
 from flask import Flask, request
 from flask_socketio import SocketIO
+
+DB_URL = 'postgresql://postgres:qJ4iu4Bqwb6AkaFc@db.butcgsmwqyviesojrclq.supabase.co:5432/postgres'
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'public'), static_url_path='')
@@ -23,6 +30,7 @@ def add_no_cache(response):
 
 TICK_RATE = 30
 DT = 1.0 / TICK_RATE
+# Файл как резервная копия, основное хранилище — PostgreSQL
 DATA_DIR = '/data'
 os.makedirs(DATA_DIR, exist_ok=True)
 SAVE_FILE = os.path.join(DATA_DIR, 'players.json')
@@ -84,25 +92,73 @@ def hash_pass(p):
     return hashlib.sha256(p.encode()).hexdigest()
 
 
-def load_accounts():
-    if not os.path.exists(SAVE_FILE):
-        return {}
+def db_conn():
+    return psycopg2.connect(DB_URL, connect_timeout=10)
+
+
+def init_db():
     try:
-        with open(SAVE_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception:
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS accounts (
+                        nick TEXT PRIMARY KEY,
+                        data JSONB NOT NULL
+                    )
+                ''')
+            conn.commit()
+        print('[DB] Table ready')
+    except Exception as e:
+        print('[DB] init error:', e)
+
+
+def load_accounts():
+    """Загружаем все аккаунты из PostgreSQL."""
+    try:
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute('SELECT nick, data FROM accounts')
+                rows = cur.fetchall()
+        result = {}
+        for nick, data in rows:
+            result[nick] = data
+        print(f'[DB] Loaded {len(result)} accounts')
+        return result
+    except Exception as e:
+        print('[DB] load error:', e)
+        # Fallback — старый JSON, если БД недоступна
+        if os.path.exists(SAVE_FILE):
+            try:
+                with open(SAVE_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception:
+                pass
         return {}
 
 
+init_db()
 accounts = load_accounts()
 
 
 def save_accounts():
+    """Сохраняем все аккаунты в PostgreSQL (upsert)."""
     try:
-        with open(SAVE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(accounts, f, ensure_ascii=False, indent=2)
+        with db_conn() as conn:
+            with conn.cursor() as cur:
+                for nick, data in accounts.items():
+                    cur.execute('''
+                        INSERT INTO accounts (nick, data) VALUES (%s, %s)
+                        ON CONFLICT (nick) DO UPDATE SET data = EXCLUDED.data
+                    ''', (nick, Json(data)))
+            conn.commit()
     except Exception as e:
-        print('save err', e)
+        print('[DB] save error:', e)
+        # Fallback — пишем в JSON, чтобы не потерять данные
+        try:
+            with open(SAVE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(accounts, f, ensure_ascii=False, indent=2)
+        except Exception as e2:
+            print('json fallback err', e2)
 
 
 def persist_player(p):
