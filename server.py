@@ -142,19 +142,26 @@ def max_player_x():
 
 
 def ensure_pits(up_to):
-    """Первая яма — сразу после старта дороги, потом через нарастающее расстояние."""
+    """Ямы генерируются от x=155 с промежутком, растущим от расстояния."""
     pits = state['pits']
     if not pits:
-        # Первая яма прямо на старте дороги (x = 155)
+        # Первая яма в 5м от старта дороги (x = 155)
         pits.append({'x': ROAD_START_X + 5, 'w': PIT_LEN})
     last = pits[-1]['x'] + pits[-1]['w']
     while last < up_to:
-        idx = len(pits)
-        # промежуток: 12, 22, 32, 42... (+10 за яму)
-        gap = 5 + idx * 20 + random.random() * 10
+        dist = max(0.0, last - ROAD_START_X)
+        # Промежуток = 5 + 10% от расстояния + рандом 0..15
+        # 5м от старта: gap ≈ 5, 100м: gap ≈ 15, 500м: gap ≈ 55, 1000м: gap ≈ 105
+        gap = 5 + dist * 0.1 + random.random() * 15
         last += gap
         pits.append({'x': last, 'w': PIT_LEN})
         last += PIT_LEN
+
+
+def reset_pits():
+    """Полностью пересоздать ямы с нуля."""
+    state['pits'] = []
+    ensure_pits(2000)
 
 
 def brainrot_value_at(x):
@@ -397,7 +404,6 @@ def step(dt):
                 p['shop_t'] = SHOP_TIME
         elif not p['shop_open']:
             p['shop_t'] = max(0.0, p['shop_t'] - dt * 2)
-        # если shop_open уже True — держать не нужно, пока рядом с NPC
 
         # --- ПОДБОР БРЕЙНРОТА ---
         near_br_id = None
@@ -408,7 +414,6 @@ def step(dt):
                 best_d = d
                 near_br_id = br_id
 
-        # Сбросить target, если объект уже исчез (забрал другой игрок / истёк)
         if p['pick_target'] is not None and p['pick_target'] not in state['brainrots']:
             p['pick_target'] = None
             p['pick_t'] = 0
@@ -517,7 +522,12 @@ def step(dt):
         if not spawn_brainrot():
             break
 
-    state['pits'] = [pt for pt in state['pits'] if pt['x'] + pt['w'] > max_player_x() - 500]
+    # ⬇️ НЕ УДАЛЯЕМ ЯМЫ, КОТОРЫЕ БЛИЗКО К СТАРТУ
+    # (иначе после престижа первые ямы окажутся далеко)
+    mpx = max_player_x()
+    state['pits'] = [pt for pt in state['pits']
+                     if pt['x'] < ROAD_START_X + 3000
+                     or pt['x'] + pt['w'] > mpx - 500]
 
     top = get_top()
 
@@ -810,7 +820,6 @@ def on_admin_cmd(data):
                 persist_player(target); save_accounts()
                 resp = {'ok': True, 'text': f'{target_nick}: скорость = {100+val}%'}
             elif cmd == 'reset_player':
-                # Сброс ВСЕХ данных игрока к начальному состоянию
                 target['money'] = 0
                 target['speed_bonus'] = 0
                 target['speed_limit'] = None
@@ -825,7 +834,6 @@ def on_admin_cmd(data):
                 target['cost_10'] = COST_10_BASE
                 persist_player(target); save_accounts()
                 resp = {'ok': True, 'text': f'{target_nick}: ВСЕ данные сброшены'}
-
             elif cmd == 'set_password':
                 new_pwd = str(data.get('value', '')).strip()
                 if len(new_pwd) < 3:
@@ -834,12 +842,10 @@ def on_admin_cmd(data):
                     target['pass_hash'] = hash_pass(new_pwd)
                     persist_player(target); save_accounts()
                     resp = {'ok': True, 'text': f'{target_nick}: пароль изменён на "{new_pwd}"'}
-
             elif cmd == 'slots':
                 val = int(data.get('value', 10))
                 val = max(BASE_START_SLOTS, min(BASE_MAX_SLOTS, val))
                 target['base_slots'] = val
-                # сбросить пэды вне нового лимита
                 for i in range(val, BASE_MAX_SLOTS):
                     target['base_pads'][i] = None
                 persist_player(target); save_accounts()
@@ -1009,6 +1015,7 @@ def on_buy_speed(data):
                                 'err': not resp.get('ok')}, to=sid)
         return resp
 
+
 @socketio.on('do_prestige')
 def on_do_prestige(data=None):
     sid = request.sid
@@ -1031,6 +1038,10 @@ def on_do_prestige(data=None):
             p['cost_1'] = COST_1_BASE
             p['cost_5'] = COST_5_BASE
             p['cost_10'] = COST_10_BASE
+
+            # ⬇️ ВАЖНО: пересоздаём ямы с нуля, чтобы после престижа они были близко
+            reset_pits()
+
             persist_player(p)
             save_accounts()
             resp = {'ok': True, 'text': f'⭐ Престиж {p["prestige"]}! Доход x{p["income_multiplier"]}'}
@@ -1038,6 +1049,7 @@ def on_do_prestige(data=None):
         socketio.emit('toast', {'text': resp.get('text') or resp.get('err'),
                                 'err': not resp.get('ok')}, to=sid)
         return resp
+
 
 @socketio.on('close_shop')
 def on_close_shop():
