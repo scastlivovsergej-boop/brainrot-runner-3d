@@ -2,4 +2,5 @@ Flask
 Flask-SocketIO
 simple-websocket
 gunicorn
-eventlet
+gevent
+gevent-websocket

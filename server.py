@@ -4,7 +4,7 @@ from flask_socketio import SocketIO
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'public'), static_url_path='')
-socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading',
+socketio = SocketIO(app, cors_allowed_origins='*', async_mode='gevent',
                     ping_timeout=60, ping_interval=25)
 
 @app.route('/')
