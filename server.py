@@ -350,7 +350,7 @@ def new_player(sid, nick):
         'cost_10': COST_10_BASE,
         'prestige': 0,
         'income_multiplier': 1.0,
-        'wall_timer': 2.0,
+        'wall_timer': 5.0,
         'weapon_tier': 0,
         'armor_tier': 0,
         'has_shield': False,
@@ -600,7 +600,7 @@ def step(dt):
         if p['wall_timer'] <= 0:
             if len(state['walls']) < WALL_LIMIT:
                 spawn_wall_pack_near(p['x'])
-                p['wall_timer'] = 2.0 + random.random() * 2.0
+                p['wall_timer'] = 8.0 + random.random() * 6.0
             else:
                 p['wall_timer'] = 0.8
 
