@@ -1,5 +1,5 @@
 // Подключается через `import './input.js'` из game.js
-import { G, socket, showToast } from './network.js';
+import { G, socket } from './network.js';
 
 const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 window.isTouchDevice = isTouchDevice;
@@ -30,6 +30,7 @@ export function sendInput(extra) {
     dx: G.keys.dx, dz: G.keys.dz,
     hold_e: G.holdE, hold_d: G.holdD,
     speed_limit: G.speedLimit,
+    shield: G.shieldActive || false,
     ...(extra || {})
   });
 }
@@ -46,6 +47,7 @@ window.recompute = recompute;
 // ============================================================
 let chatFocused = false;
 window.__isChatFocused = () => chatFocused;
+window.__setChatFocused = (v) => { chatFocused = v; };
 
 const K = e => e.key.toLowerCase();
 
@@ -82,7 +84,7 @@ addEventListener('keyup', e => {
 setInterval(() => sendInput(), 120);
 
 // ============================================================
-//  МЫШЬ (камера)
+//  МЫШЬ (камера + щит + атака)
 // ============================================================
 const canvas = document.getElementById('game');
 let rmbDown = false;
@@ -93,12 +95,19 @@ if (canvas) {
     if (chatFocused) return;
     if (e.button === 2) {
       rmbDown = true;
+      G.shieldActive = true;
+      sendInput();
       if (canvas.requestPointerLock) canvas.requestPointerLock();
+    } else if (e.button === 0) {
+      // атака — отправим в game.js через window hook
+      if (window.__tryAttack) window.__tryAttack(e);
     }
   });
   document.addEventListener('mouseup', e => {
     if (e.button === 2) {
       rmbDown = false;
+      G.shieldActive = false;
+      sendInput();
       if (document.exitPointerLock) document.exitPointerLock();
     }
   });
@@ -196,6 +205,27 @@ if (isTouchDevice) {
   document.getElementById('mobJump').addEventListener('touchstart', (e) => {
     e.preventDefault();
     sendInput({ jump: true });
+  });
+
+  // Щит — зажать
+  const mobShield = document.getElementById('mobShield');
+  mobShield.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    G.shieldActive = true;
+    mobShield.classList.add('on');
+    sendInput();
+  });
+  mobShield.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    G.shieldActive = false;
+    mobShield.classList.remove('on');
+    sendInput();
+  });
+
+  // Атака — тапнуть по ближайшему игроку в радиусе 5м
+  document.getElementById('mobAttack').addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (window.__attackNearest) window.__attackNearest();
   });
 
   const mobE = document.getElementById('mobActionE');

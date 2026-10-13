@@ -1,4 +1,3 @@
-// Подключается через `import './ui.js'` из game.js
 import { G, socket, fmt, showToast } from './network.js';
 
 // ============================================================
@@ -19,10 +18,12 @@ window.admCmd = function(cmd) {
   else if (cmd === 'income_bonus') payload.value = parseFloat(document.getElementById('admInc').value) || 0;
   else if (cmd === 'speed') payload.value = parseInt(document.getElementById('admSpeed').value) || 0;
   else if (cmd === 'prestige') payload.value = parseInt(document.getElementById('admPrestige').value) || 0;
+  else if (cmd === 'set_weapon') payload.value = parseInt(document.getElementById('admWeapon').value) || 0;
+  else if (cmd === 'set_armor') payload.value = parseInt(document.getElementById('admArmor').value) || 0;
   else if (cmd === 'slots') payload.value = parseInt(document.getElementById('admSlots').value) || 10;
   else if (cmd === 'set_password') payload.value = document.getElementById('admPass').value.trim();
   else if (cmd === 'reset_player') {
-    if (!confirm('Точно СБРОСИТЬ ВСЕ данные игрока?\n\nДеньги, скорость, верити, цены, престиж — всё обнулится!')) return;
+    if (!confirm('Точно СБРОСИТЬ ВСЕ данные игрока?\n\nДеньги, скорость, верити, цены, престиж, оружие, броня — всё обнулится!')) return;
   }
   else if (cmd === 'pad') {
     payload.idx = parseInt(document.getElementById('admPad').value) || 0;
@@ -60,6 +61,8 @@ window.admLoad = function() {
       document.getElementById('admSpeed').value = d.speed_bonus;
       document.getElementById('admSlots').value = d.base_slots || 10;
       document.getElementById('admPrestige').value = d.prestige || 0;
+      document.getElementById('admWeapon').value = d.weapon_tier || 0;
+      document.getElementById('admArmor').value = d.armor_tier || 0;
       showToast('Загружено: ' + d.nick);
     } else {
       showToast((resp && resp.err) || 'Не найден', true);
@@ -100,6 +103,7 @@ function openPrestigeModal() {
     `• скорость: +${curBonus}%<br>` +
     `• деньги: ${fmt(my.money)}💰<br>` +
     `• верити на базе: ${padsUsed} шт.<br>` +
+    `• оружие и броня: сбросятся<br>` +
     `• цены в магазине сбросятся`;
 
   prestigeConfirmBtn.disabled = !can;
@@ -123,16 +127,104 @@ prestigeConfirmBtn.addEventListener('click', () => {
 });
 
 // ============================================================
-//  МАГАЗИН
+//  МАГАЗИН — вкладки
 // ============================================================
+let shopTab = 'speed';
+document.querySelectorAll('.shop-tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.shop-tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.shop-pane').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    shopTab = t.dataset.tab;
+    document.getElementById('pane-' + shopTab).classList.add('active');
+  });
+});
+
 document.getElementById('shopClose').addEventListener('click', () => {
   socket.emit('close_shop');
 });
 document.getElementById('shopModal').addEventListener('click', e => {
   if (e.target.id === 'shopModal') socket.emit('close_shop');
 });
-document.querySelectorAll('.sc-btn').forEach(btn => {
+document.querySelectorAll('.sc-buy-speed').forEach(btn => {
   btn.addEventListener('click', () => buySpeed(parseInt(btn.dataset.kind)));
+});
+
+// ============================================================
+//  ОТРИСОВКА КАРТОЧЕК ОРУЖИЯ / БРОНИ
+// ============================================================
+function renderWeapons() {
+  const grid = document.getElementById('weaponsGrid');
+  if (!grid) return;
+  const my = G.serverData.players[G.me];
+  if (!my) return;
+  const weapons = G.weapons || [];
+  const myTier = my.weapon_tier || 0;
+  grid.innerHTML = weapons.map((w, i) => {
+    const owned = i === myTier;
+    const weaker = i < myTier;
+    const canBuy = i > myTier && my.money >= w.cost;
+    let btnLabel = 'Купить';
+    if (owned) btnLabel = '✅ Надето';
+    else if (weaker) btnLabel = '— Хуже';
+    else if (my.money < w.cost) btnLabel = 'Мало 💰';
+    const cls = 'weapon-card' + (owned ? ' owned' : '') + (weaker ? ' weaker' : '');
+    return `<div class="${cls}">
+      <div class="wc-emoji">${w.emoji}</div>
+      <div class="wc-name">${w.name}</div>
+      <div class="wc-stat">Урон: ${w.damage}</div>
+      <div class="wc-price">${w.cost === 0 ? '—' : fmt(w.cost) + '💰'}</div>
+      <button class="sc-btn wc-buy" data-tier="${i}" ${(canBuy && !owned && !weaker) ? '' : 'disabled'}>${btnLabel}</button>
+    </div>`;
+  }).join('');
+  grid.querySelectorAll('.wc-buy').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tier = parseInt(btn.dataset.tier);
+      socket.emit('buy_weapon', { tier }, (resp) => {
+        if (resp && !resp.ok) showToast(resp.err, true);
+      });
+    });
+  });
+}
+
+function renderArmors() {
+  const grid = document.getElementById('armorsGrid');
+  if (!grid) return;
+  const my = G.serverData.players[G.me];
+  if (!my) return;
+  const armors = G.armors || [];
+  const myTier = my.armor_tier || 0;
+  grid.innerHTML = armors.map((a, i) => {
+    const owned = i === myTier;
+    const weaker = i < myTier;
+    const canBuy = i > myTier && my.money >= a.cost;
+    let btnLabel = 'Купить';
+    if (owned) btnLabel = '✅ Надето';
+    else if (weaker) btnLabel = '— Хуже';
+    else if (my.money < a.cost) btnLabel = 'Мало 💰';
+    const cls = 'armor-card' + (owned ? ' owned' : '') + (weaker ? ' weaker' : '');
+    return `<div class="${cls}">
+      <div class="wc-emoji">${a.emoji}</div>
+      <div class="wc-name">${a.name}</div>
+      <div class="wc-stat">HP: ${a.hp}</div>
+      <div class="wc-price">${a.cost === 0 ? '—' : fmt(a.cost) + '💰'}</div>
+      <button class="sc-btn wc-buy" data-tier="${i}" ${(canBuy && !owned && !weaker) ? '' : 'disabled'}>${btnLabel}</button>
+    </div>`;
+  }).join('');
+  grid.querySelectorAll('.wc-buy').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tier = parseInt(btn.dataset.tier);
+      socket.emit('buy_armor', { tier }, (resp) => {
+        if (resp && !resp.ok) showToast(resp.err, true);
+      });
+    });
+  });
+}
+
+// Клиентские данные weapons/armors приходят из init
+socket.on('init', (d) => {
+  if (d.weapons) window.G.weapons = d.weapons;
+  if (d.armors) window.G.armors = d.armors;
 });
 
 // ============================================================
@@ -228,7 +320,7 @@ document.getElementById('setInvY').addEventListener('change', e => {
 });
 
 // ============================================================
-//  АВТОДОПОЛНЕНИЕ НИКОВ В АДМИНКЕ
+//  АВТОДОПОЛНЕНИЕ НИКОВ
 // ============================================================
 const admNickInput = document.getElementById('admNick');
 const admNickDropdown = document.getElementById('admNickDropdown');
@@ -265,9 +357,7 @@ admNickInput.addEventListener('keydown', (e) => {
   const opts = admNickDropdown.querySelectorAll('.nick-option');
   if (e.key === 'Tab' || e.key === 'ArrowDown') {
     e.preventDefault();
-    if (!admNickDropdown.classList.contains('active')) {
-      renderNickDropdown(admNickInput.value);
-    }
+    if (!admNickDropdown.classList.contains('active')) renderNickDropdown(admNickInput.value);
     if (opts.length) {
       nickSelectedIdx = (nickSelectedIdx + 1) % opts.length;
       opts.forEach((el, i) => el.classList.toggle('selected', i === nickSelectedIdx));
@@ -287,9 +377,7 @@ admNickInput.addEventListener('keydown', (e) => {
 
 export function loadAllNicks() {
   socket.emit('admin_list_nicks', {}, (resp) => {
-    if (resp && resp.ok) {
-      G.serverData.all_nicks = resp.nicks || [];
-    }
+    if (resp && resp.ok) G.serverData.all_nicks = resp.nicks || [];
   });
 }
 window.loadAllNicks = loadAllNicks;
@@ -313,7 +401,7 @@ setInterval(() => {
 }, 2500);
 
 // ============================================================
-//  HUD ОБНОВЛЕНИЕ (10 раз в секунду)
+//  HUD ОБНОВЛЕНИЕ
 // ============================================================
 setInterval(() => {
   const my = G.serverData.players[G.me];
@@ -330,9 +418,15 @@ setInterval(() => {
     (my.prestige > 0
       ? `⭐ Престиж <b>${my.prestige}</b> · ×${(my.income_multiplier || 1).toFixed(1)}<br>`
       : '') +
-    `<span class="hint">WASD · SPACE · T — чат · E — действия</span>`;
+    `<span class="hint">WASD · SPACE · T — чат · ЛКМ — атака · ПКМ — щит</span>`;
   document.getElementById('speedChip').innerHTML =
     `⚡ ${my.speed_pct_active || my.speed_pct}% / ${my.speed_pct}%`;
+
+  // Чип оружия
+  const weapons = G.weapons || [];
+  const wName = weapons[my.weapon_tier] ? weapons[my.weapon_tier].name : '—';
+  const wEmoji = weapons[my.weapon_tier] ? weapons[my.weapon_tier].emoji : '⚔️';
+  document.getElementById('weaponChip').innerHTML = `${wEmoji} ${wName}`;
 
   const topList = G.serverData.top || [];
   document.getElementById('board').innerHTML =
@@ -387,6 +481,7 @@ setInterval(() => {
     }
   }
 
+  // Магазин — обновляем карточки и цены
   const shopModal = document.getElementById('shopModal');
   if (my.shop_open) {
     shopModal.classList.add('active');
@@ -394,11 +489,13 @@ setInterval(() => {
     document.getElementById('scp1').textContent = fmt(my.cost_1) + '💰';
     document.getElementById('scp5').textContent = fmt(my.cost_5) + '💰';
     document.getElementById('scp10').textContent = fmt(my.cost_10) + '💰';
-    document.querySelectorAll('.sc-btn').forEach(btn => {
+    document.querySelectorAll('.sc-buy-speed').forEach(btn => {
       const kind = parseInt(btn.dataset.kind);
       const cost = kind === 1 ? my.cost_1 : kind === 5 ? my.cost_5 : my.cost_10;
       btn.disabled = my.money < cost;
     });
+    renderWeapons();
+    renderArmors();
   } else {
     shopModal.classList.remove('active');
   }
@@ -456,7 +553,7 @@ if (window.isTouchDevice) {
 }
 
 // ============================================================
-//  SPEED SWITCH (переключатель скорости)
+//  SPEED SWITCH
 // ============================================================
 const ssWrap = document.getElementById('speedSwitch');
 const ssNormal = document.getElementById('ssNormal');

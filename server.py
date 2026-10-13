@@ -35,6 +35,34 @@ os.makedirs(DATA_DIR, exist_ok=True)
 SAVE_FILE = os.path.join(DATA_DIR, 'players.json')
 ADMIN_PASSWORD = 'SergGGHH'
 
+# ============================================================
+#  ОРУЖИЕ И БРОНЯ
+# ============================================================
+WEAPONS = [
+    {'name': 'Кулак',    'emoji': '🥊', 'damage': 0,  'cost': 0},
+    {'name': 'Бита',     'emoji': '🏏', 'damage': 2,  'cost': 50_000},
+    {'name': 'Нож',      'emoji': '🔪', 'damage': 3,  'cost': 250_000},
+    {'name': 'Меч',      'emoji': '🗡️', 'damage': 5,  'cost': 1_250_000},
+    {'name': 'Пистолет', 'emoji': '🔫', 'damage': 8,  'cost': 5_000_000},
+    {'name': 'РПГ',      'emoji': '💥', 'damage': 20, 'cost': 50_000_000},
+]
+
+ARMORS = [
+    {'name': 'Без брони', 'emoji': '👕', 'hp': 3,  'cost': 0},
+    {'name': 'Лёгкая',    'emoji': '🦺', 'hp': 6,  'cost': 100_000},
+    {'name': 'Средняя',   'emoji': '🛡️', 'hp': 12, 'cost': 500_000},
+    {'name': 'Тяжёлая',   'emoji': '🛡️🛡️', 'hp': 20, 'cost': 2_500_000},
+    {'name': 'Алмазная',  'emoji': '💎', 'hp': 40, 'cost': 15_000_000},
+]
+
+ATTACK_RADIUS = 5.0
+ATTACK_CD = 0.3
+STUN_DURATION = 2.0
+INVULN_AFTER_STUN = 5.0
+DAMAGE_RESET_TIME = 30.0
+SHIELD_SPEED_MULT = 0.5
+SHIELD_DAMAGE_MULT = 0.1
+
 WALL_TYPES = [
     {'name': 'super_slow', 'speed': 18, 'color': 0x95a5a6, 'label': '🐢'},
     {'name': 'slow',       'speed': 32, 'color': 0x3498db, 'label': '🚶'},
@@ -80,8 +108,10 @@ PAD_Z_START = -14
 PAD_Z_STEP = 3.5
 PAD_RADIUS = 1.9
 
-PLAYER_BR_CAP = 20
-PLAYER_BR_RANGE = (50, 1200)
+PLAYER_BR_CAP = 40
+PLAYER_BR_RANGE = (50, 1500)
+
+WALL_LIMIT = 60
 
 
 def pad_pos(idx):
@@ -178,6 +208,8 @@ def persist_player(p):
         'cost_1': p.get('cost_1', COST_1_BASE),
         'cost_5': p.get('cost_5', COST_5_BASE),
         'cost_10': p.get('cost_10', COST_10_BASE),
+        'weapon_tier': p.get('weapon_tier', 0),
+        'armor_tier': p.get('armor_tier', 0),
     }
 
 
@@ -267,7 +299,10 @@ def player_speed(p):
         pct = max(0, min(max_pct, int(limit)))
     else:
         pct = max_pct
-    return PLAYER_FWD_BASE * (pct / 100.0)
+    base = PLAYER_FWD_BASE * (pct / 100.0)
+    if p.get('shield_active'):
+        base *= SHIELD_SPEED_MULT
+    return base
 
 
 def total_income(p):
@@ -277,6 +312,11 @@ def total_income(p):
             s += pad['income']
     s += p.get('income_bonus', 0)
     return round(s * p.get('income_multiplier', 1.0), 2)
+
+
+def get_hp_max(p):
+    tier = max(0, min(len(ARMORS) - 1, p.get('armor_tier', 0)))
+    return ARMORS[tier]['hp']
 
 
 def new_player(sid, nick):
@@ -311,11 +351,23 @@ def new_player(sid, nick):
         'prestige': 0,
         'income_multiplier': 1.0,
         'wall_timer': 2.0,
+        # оружие/броня
+        'weapon_tier': 0,
+        'armor_tier': 0,
+        'damage_accum': 0.0,
+        'last_dmg_time': 0.0,
+        'stun_until': 0.0,
+        'invuln_until': 0.0,
+        'shield_active': False,
+        'attack_cd': 0.0,
     }
 
 
 def light_player(p):
     pads = list(p['base_pads'][:p['base_slots']])
+    now = time.time()
+    hp_max = get_hp_max(p)
+    hp_cur = max(0, hp_max - p.get('damage_accum', 0))
     return {
         'id': p['id'], 'name': p['name'],
         'x': round(p['x'], 2), 'z': round(p['z'], 2), 'y': round(p['y'], 2),
@@ -348,6 +400,13 @@ def light_player(p):
         'cost_1': p.get('cost_1', COST_1_BASE),
         'cost_5': p.get('cost_5', COST_5_BASE),
         'cost_10': p.get('cost_10', COST_10_BASE),
+        'weapon_tier': p.get('weapon_tier', 0),
+        'armor_tier': p.get('armor_tier', 0),
+        'hp_max': hp_max,
+        'hp_cur': round(hp_cur, 1),
+        'damage_accum': round(p.get('damage_accum', 0), 1),
+        'stunned': now < p.get('stun_until', 0),
+        'shielded': bool(p.get('shield_active')),
     }
 
 
@@ -395,6 +454,21 @@ def pad_at(x, z):
     return None
 
 
+def stun_player(t):
+    now = time.time()
+    t['stun_until'] = now + STUN_DURATION
+    t['invuln_until'] = now + INVULN_AFTER_STUN
+    t['damage_accum'] = 0
+    # дропаем всё
+    for br in t['carrying']:
+        br['x'] = t['x']
+        br['z'] = t['z']
+        br['expire_at'] = time.time() + BRAINROT_LIFE
+        state['brainrots'][br['id']] = br
+    t['carrying'] = []
+    socketio.emit('player:stunned', {'id': t['id']})
+
+
 def step(dt):
     ensure_pits(max_player_x() + 1500)
     now = time.time()
@@ -405,12 +479,20 @@ def step(dt):
 
         if p['invuln'] > 0:
             p['invuln'] -= dt
+        if p['attack_cd'] > 0:
+            p['attack_cd'] -= dt
         if p['jump_t'] > 0:
             p['jump_t'] -= dt
             if p['jump_t'] < 0:
                 p['jump_t'] = 0
 
-        spd = player_speed(p)
+        # сброс накопленного урона через 30 сек
+        if p['damage_accum'] > 0 and now - p['last_dmg_time'] > DAMAGE_RESET_TIME:
+            p['damage_accum'] = 0
+
+        # оглушение — не двигается
+        is_stunned = now < p['stun_until']
+        spd = player_speed(p) if not is_stunned else 0
         p['x'] = max(SAFE_X_MIN + 1, p['x'] + spd * p['dx'] * dt)
         zmax = SAFE_Z_HALF if p['x'] < ROAD_START_X else LANE_HALF
         p['z'] = max(-zmax, min(zmax, p['z'] + PLAYER_STRAFE * p['dz'] * dt))
@@ -512,20 +594,19 @@ def step(dt):
             p['destroy_idx'] = -1
             p['destroy_t'] = 0
 
-    # стены для каждого игрока
+    # спавн стен
     for p in state['players'].values():
         if not p['authenticated']:
             continue
         p['wall_timer'] -= dt
         if p['wall_timer'] <= 0 and p['x'] > ROAD_START_X + 20:
-            front_walls = [w for w in state['walls']
-                           if p['x'] + 30 < w['x'] < p['x'] + 500]
-            if not front_walls and len(state['walls']) < 40:
+            if len(state['walls']) < WALL_LIMIT:
                 spawn_wall_pack_near(p['x'])
-                p['wall_timer'] = 1.5 + random.random() * 1.5
+                p['wall_timer'] = 0.6 + random.random() * 0.6
             else:
-                p['wall_timer'] = 0.4
+                p['wall_timer'] = 0.5
 
+    # движение стен
     alive = []
     for w in state['walls']:
         w['x'] -= w['speed'] * dt
@@ -533,6 +614,8 @@ def step(dt):
             if not p['authenticated']:
                 continue
             if p['invuln'] > 0 or p['state'] == 'pit':
+                continue
+            if now < p['stun_until']:
                 continue
             if p['x'] <= ROAD_START_X:
                 continue
@@ -563,7 +646,7 @@ def step(dt):
             xhi = p['x'] + PLAYER_BR_RANGE[1]
             cnt = sum(1 for br in state['brainrots'].values() if xlo < br['x'] < xhi)
             need = PLAYER_BR_CAP - cnt
-            for _ in range(need):
+            for _ in range(min(need, 5)):
                 if not spawn_brainrot_near(p['x']):
                     break
 
@@ -668,12 +751,54 @@ def on_connect():
             'shop': {'x': SHOP_X, 'z': SHOP_Z},
             'pad_cols': PAD_COLS, 'pad_xs': PAD_XS,
             'pad_z_start': PAD_Z_START, 'pad_z_step': PAD_Z_STEP,
+            'weapons': WEAPONS,
+            'armors': ARMORS,
         }, to=sid)
 
 
 @socketio.on('ping_check')
 def on_ping_check(data=None):
     return {'ok': True, 't': time.time()}
+
+
+@socketio.on('attack')
+def on_attack(data):
+    sid = request.sid
+    target_id = data.get('target')
+    with lock:
+        p = state['players'].get(sid)
+        if not p or not p['authenticated']:
+            return
+        now = time.time()
+        if p['attack_cd'] > 0:
+            return
+        if now < p['stun_until']:
+            return
+        if p['weapon_tier'] <= 0:
+            return
+        t = state['players'].get(target_id)
+        if not t or not t['authenticated']:
+            return
+        # в сейф-зоне нельзя
+        if p['x'] < ROAD_START_X or t['x'] < ROAD_START_X:
+            return
+        dx = p['x'] - t['x']; dz = p['z'] - t['z']
+        if dx * dx + dz * dz > ATTACK_RADIUS * ATTACK_RADIUS:
+            return
+        if now < t['invuln_until']:
+            return
+        tier = max(0, min(len(WEAPONS) - 1, p['weapon_tier']))
+        dmg = WEAPONS[tier]['damage']
+        if dmg <= 0:
+            return
+        if t.get('shield_active'):
+            dmg = max(1, dmg * SHIELD_DAMAGE_MULT)
+        t['damage_accum'] = t.get('damage_accum', 0) + dmg
+        t['last_dmg_time'] = now
+        p['attack_cd'] = ATTACK_CD
+        hp_max = get_hp_max(t)
+        if t['damage_accum'] >= hp_max:
+            stun_player(t)
 
 
 @socketio.on('check_nick')
@@ -739,6 +864,8 @@ def on_auth(data):
             p['cost_1'] = int(acc.get('cost_1', COST_1_BASE))
             p['cost_5'] = int(acc.get('cost_5', COST_5_BASE))
             p['cost_10'] = int(acc.get('cost_10', COST_10_BASE))
+            p['weapon_tier'] = int(acc.get('weapon_tier', 0))
+            p['armor_tier'] = int(acc.get('armor_tier', 0))
             p['pass_hash'] = h
             p['account'] = nick
             p['authenticated'] = True
@@ -814,6 +941,8 @@ def on_admin_get_player(data):
                     'base_slots': tp['base_slots'],
                     'base_upgrade_cost': tp['base_upgrade_cost'],
                     'prestige': tp.get('prestige', 0),
+                    'weapon_tier': tp.get('weapon_tier', 0),
+                    'armor_tier': tp.get('armor_tier', 0),
                 }}
         if nick in accounts:
             acc = accounts[nick]
@@ -825,6 +954,8 @@ def on_admin_get_player(data):
                 'base_slots': acc.get('base_slots', BASE_START_SLOTS),
                 'base_upgrade_cost': acc.get('base_upgrade_cost', BASE_UPGRADE_COST_BASE),
                 'prestige': acc.get('prestige', 0),
+                'weapon_tier': acc.get('weapon_tier', 0),
+                'armor_tier': acc.get('armor_tier', 0),
             }}
         return {'ok': False, 'err': f'Игрок "{nick}" не найден'}
 
@@ -861,6 +992,8 @@ def on_admin_cmd(data):
                 'cost_1': int(acc.get('cost_1', COST_1_BASE)),
                 'cost_5': int(acc.get('cost_5', COST_5_BASE)),
                 'cost_10': int(acc.get('cost_10', COST_10_BASE)),
+                'weapon_tier': int(acc.get('weapon_tier', 0)),
+                'armor_tier': int(acc.get('armor_tier', 0)),
                 'account': target_nick,
                 'is_admin': acc.get('is_admin', False),
                 'authenticated': False,
@@ -892,6 +1025,16 @@ def on_admin_cmd(data):
                 target['income_multiplier'] = 1.0 + 0.5 * val
                 persist_player(target); save_accounts()
                 resp = {'ok': True, 'text': f'{target_nick}: престиж = {val} (×{target["income_multiplier"]})'}
+            elif cmd == 'set_weapon':
+                val = max(0, min(len(WEAPONS) - 1, int(data.get('value', 0))))
+                target['weapon_tier'] = val
+                persist_player(target); save_accounts()
+                resp = {'ok': True, 'text': f'{target_nick}: оружие = {WEAPONS[val]["name"]}'}
+            elif cmd == 'set_armor':
+                val = max(0, min(len(ARMORS) - 1, int(data.get('value', 0))))
+                target['armor_tier'] = val
+                persist_player(target); save_accounts()
+                resp = {'ok': True, 'text': f'{target_nick}: броня = {ARMORS[val]["name"]}'}
             elif cmd == 'reset_player':
                 target['money'] = 0
                 target['speed_bonus'] = 0
@@ -905,6 +1048,8 @@ def on_admin_cmd(data):
                 target['cost_1'] = COST_1_BASE
                 target['cost_5'] = COST_5_BASE
                 target['cost_10'] = COST_10_BASE
+                target['weapon_tier'] = 0
+                target['armor_tier'] = 0
                 persist_player(target); save_accounts()
                 resp = {'ok': True, 'text': f'{target_nick}: ВСЕ данные сброшены'}
             elif cmd == 'set_password':
@@ -1004,6 +1149,8 @@ def on_input(data):
             p['hold_e'] = bool(data['hold_e'])
         if 'hold_d' in data:
             p['hold_d'] = bool(data['hold_d'])
+        if 'shield' in data:
+            p['shield_active'] = bool(data['shield'])
         if 'speed_limit' in data:
             v = data['speed_limit']
             if v is None:
@@ -1018,6 +1165,53 @@ def on_input(data):
             p['jump_t'] = JUMP_DURATION
             if p['state'] == 'pit':
                 p['state'] = 'ground'
+
+
+@socketio.on('buy_weapon')
+def on_buy_weapon(data):
+    sid = request.sid
+    with lock:
+        p = state['players'].get(sid)
+        if not p or not p['authenticated']:
+            return {'ok': False, 'err': 'Нет игрока'}
+        tier = int(data.get('tier', 0))
+        if tier < 0 or tier >= len(WEAPONS):
+            return {'ok': False, 'err': 'Неверный уровень'}
+        if tier <= p['weapon_tier']:
+            return {'ok': False, 'err': 'У тебя уже есть это или лучше'}
+        cost = WEAPONS[tier]['cost']
+        if p['money'] < cost:
+            return {'ok': False, 'err': f'Нужно {cost} монет'}
+        p['money'] -= cost
+        p['weapon_tier'] = tier
+        persist_player(p); save_accounts()
+        resp = {'ok': True, 'text': f'Куплено: {WEAPONS[tier]["name"]}'}
+        socketio.emit('toast', {'text': resp['text']}, to=sid)
+        return resp
+
+
+@socketio.on('buy_armor')
+def on_buy_armor(data):
+    sid = request.sid
+    with lock:
+        p = state['players'].get(sid)
+        if not p or not p['authenticated']:
+            return {'ok': False, 'err': 'Нет игрока'}
+        tier = int(data.get('tier', 0))
+        if tier < 0 or tier >= len(ARMORS):
+            return {'ok': False, 'err': 'Неверный уровень'}
+        if tier <= p['armor_tier']:
+            return {'ok': False, 'err': 'У тебя уже есть это или лучше'}
+        cost = ARMORS[tier]['cost']
+        if p['money'] < cost:
+            return {'ok': False, 'err': f'Нужно {cost} монет'}
+        p['money'] -= cost
+        p['armor_tier'] = tier
+        p['damage_accum'] = 0
+        persist_player(p); save_accounts()
+        resp = {'ok': True, 'text': f'Надето: {ARMORS[tier]["name"]}'}
+        socketio.emit('toast', {'text': resp['text']}, to=sid)
+        return resp
 
 
 @socketio.on('select_destroy')
@@ -1117,6 +1311,9 @@ def on_do_prestige(data=None):
             p['cost_1'] = COST_1_BASE
             p['cost_5'] = COST_5_BASE
             p['cost_10'] = COST_10_BASE
+            p['weapon_tier'] = 0
+            p['armor_tier'] = 0
+            p['damage_accum'] = 0
             reset_pits()
             persist_player(p)
             save_accounts()

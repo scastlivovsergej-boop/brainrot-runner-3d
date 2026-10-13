@@ -526,6 +526,7 @@ function updateFromServer() {
     const isMe = id === G.me;
     if (!st) {
       const mesh = makeHumanoid(isMe ? 0x00b8e5 : 0xe55599, isMe);
+      mesh.userData.playerId = id;
       playerGroup.add(mesh);
       st = {
         mesh,
@@ -585,17 +586,65 @@ function updateFromServer() {
 }
 
 // ============================================================
-//  PLAYER:HIT
+//  АТАКА
 // ============================================================
-socket.on('player:hit', d => {
-  if (d.id !== G.me) return;
-  const f = document.getElementById('flash'), m = document.getElementById('hitMsg');
-  f.style.background = 'rgba(231,76,60,0.55)';
-  m.classList.add('show');
-  setTimeout(() => f.style.background = 'rgba(231,76,60,0)', 140);
-  setTimeout(() => m.classList.remove('show'), 800);
-  const st = G.playerStates.get(G.me);
-  if (st) { st.current.set(ROAD_START_X - 15, 0, 0); st.target.set(ROAD_START_X - 15, 0, 0); }
+const raycaster = new THREE.Raycaster();
+const mouseVec = new THREE.Vector2();
+
+window.__tryAttack = function(e) {
+  if (!G.me) return;
+  const my = G.playerStates.get(G.me);
+  if (!my) return;
+  if (my.data.weapon_tier <= 0) return;
+  mouseVec.x = (e.clientX / innerWidth) * 2 - 1;
+  mouseVec.y = -(e.clientY / innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouseVec, camera);
+  // Собираем все меши игроков кроме своего
+  const targets = [];
+  for (const [id, st] of G.playerStates) {
+    if (id === G.me) continue;
+    targets.push(st.mesh);
+  }
+  const hits = raycaster.intersectObjects(targets, true);
+  if (hits.length === 0) return;
+  // Находим ближайшего игрока
+  let hitObj = hits[0].object;
+  while (hitObj && !hitObj.userData.playerId) hitObj = hitObj.parent;
+  if (!hitObj) return;
+  const targetId = hitObj.userData.playerId;
+  // Проверяем дистанцию (5м)
+  const t = G.serverData.players[targetId];
+  if (!t) return;
+  const dx = my.data.x - t.x, dz = my.data.z - t.z;
+  if (dx * dx + dz * dz > 25) return;
+  socket.emit('attack', { target: targetId });
+};
+
+window.__attackNearest = function() {
+  if (!G.me) return;
+  const my = G.playerStates.get(G.me);
+  if (!my) return;
+  if (my.data.weapon_tier <= 0) return;
+  let bestId = null, bestD = 25;
+  for (const [id, t] of Object.entries(G.serverData.players)) {
+    if (id === G.me) continue;
+    const dx = my.data.x - t.x, dz = my.data.z - t.z;
+    const d = dx * dx + dz * dz;
+    if (d < bestD) { bestD = d; bestId = id; }
+  }
+  if (bestId) socket.emit('attack', { target: bestId });
+};
+
+// ============================================================
+//  ОГЛУШЕНИЕ
+// ============================================================
+socket.on('player:stunned', (d) => {
+  if (d.id === G.me) {
+    // собственное оглушение — просто вспышка
+    const f = document.getElementById('flash');
+    f.style.background = 'rgba(255,255,0,0.35)';
+    setTimeout(() => f.style.background = 'rgba(231,76,60,0)', 300);
+  }
 });
 
 // ============================================================
@@ -604,9 +653,14 @@ socket.on('player:hit', d => {
 const camTarget = new THREE.Vector3(40, 10, 0);
 const camLook = new THREE.Vector3(60, 2.5, 0);
 
+// Для звёздочек — глобальное время
+let lastFrameTime = performance.now();
+
 function frame() {
   requestAnimationFrame(frame);
-  const t = performance.now() / 1000;
+  const now = performance.now();
+  const t = now / 1000;
+  lastFrameTime = now;
   updateFromServer();
   const my = G.playerStates.get(G.me);
 
@@ -614,7 +668,7 @@ function frame() {
     st.current.lerp(st.target, 0.55);
     st.mesh.position.copy(st.current);
 
-    // Плавный поворот по facing
+    // Плавный поворот
     const targetRot = -(st.data.facing || 0);
     let diff = targetRot - st.mesh.rotation.y;
     while (diff > Math.PI) diff -= Math.PI * 2;
@@ -629,6 +683,7 @@ function frame() {
       st.mesh.scale.set(1, 1, 1);
     }
 
+    // Гало если несёт
     let halo = st.mesh.getObjectByName('halo');
     if (st.data.carry_n > 0) {
       if (!halo) {
@@ -642,13 +697,66 @@ function frame() {
       }
     } else if (halo) st.mesh.remove(halo);
 
+    // Щит — сфера
+    let shieldMesh = st.mesh.getObjectByName('shield');
+    if (st.data.shielded) {
+      if (!shieldMesh) {
+        shieldMesh = new THREE.Mesh(
+          new THREE.SphereGeometry(2.2, 20, 16),
+          new THREE.MeshBasicMaterial({ color: 0x3498db, transparent: true, opacity: 0.28, wireframe: true })
+        );
+        shieldMesh.name = 'shield';
+        shieldMesh.position.y = 2.0;
+        st.mesh.add(shieldMesh);
+      }
+    } else if (shieldMesh) st.mesh.remove(shieldMesh);
+
+    // Оружие над головой
+    let weaponLbl = st.mesh.getObjectByName('weapon');
+    if (!weaponLbl && (st.data.weapon_tier || 0) > 0) {
+      const wp = (G.weapons || [])[st.data.weapon_tier];
+      if (wp) {
+        weaponLbl = makeLabelSprite(wp.emoji, '#fff', 'rgba(0,0,0,0)', 200, 200, 140);
+        weaponLbl.name = 'weapon';
+        weaponLbl.position.set(0.9, 4.0, 0);
+        weaponLbl.scale.set(1.2, 1.2, 1);
+        st.mesh.add(weaponLbl);
+      }
+    } else if (weaponLbl && st.data.weapon_tier !== (weaponLbl.userData.tier || 0)) {
+      // Обновление не обязательно — картинка emoji разная. Проще пересоздать.
+      st.mesh.remove(weaponLbl);
+      const wp = (G.weapons || [])[st.data.weapon_tier];
+      if (wp && st.data.weapon_tier > 0) {
+        const nl = makeLabelSprite(wp.emoji, '#fff', 'rgba(0,0,0,0)', 200, 200, 140);
+        nl.name = 'weapon';
+        nl.position.set(0.9, 4.0, 0);
+        nl.scale.set(1.2, 1.2, 1);
+        st.mesh.add(nl);
+      }
+    }
+
+    // Звёздочки при оглушении
+    let stunLbl = st.mesh.getObjectByName('stun');
+    if (st.data.stunned) {
+      if (!stunLbl) {
+        stunLbl = makeLabelSprite('💫', '#fff', 'rgba(0,0,0,0)', 200, 200, 140);
+        stunLbl.name = 'stun';
+        stunLbl.position.set(0, 4.8, 0);
+        stunLbl.scale.set(1.6, 1.6, 1);
+        st.mesh.add(stunLbl);
+      }
+      stunLbl.position.x = Math.sin(t * 5) * 0.8;
+      stunLbl.position.z = Math.cos(t * 5) * 0.8;
+    } else if (stunLbl) st.mesh.remove(stunLbl);
+
+    // Инфо над чужими
     if (!st.isMe) {
       let info = st.mesh.getObjectByName('info');
       const txt = `${st.data.name}\n💰${fmt(st.data.money)} · +${fmt(st.data.income_sec)}/сек`;
       if (!info) {
         info = makeLabelSprite('', '#fff', 'rgba(0,0,0,0.55)', 700, 200, 42);
         info.name = 'info';
-        info.position.set(0, 5.6, 0);
+        info.position.set(0, 6.2, 0);
         info.scale.set(5.6, 1.7, 1);
         st.mesh.add(info);
       }
@@ -656,14 +764,43 @@ function frame() {
         redrawMulti(info, txt.split('\n'));
         st.lastInfo = txt;
       }
+
+      // HP-бар (маленькая полоска)
+      let hpBar = st.mesh.getObjectByName('hpbar');
+      const needsHp = (st.data.damage_accum || 0) > 0 && st.data.hp_max > 0;
+      if (needsHp) {
+        if (!hpBar) {
+          const cv = document.createElement('canvas'); cv.width = 256; cv.height = 32;
+          const tex = new THREE.CanvasTexture(cv);
+          hpBar = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+          hpBar.name = 'hpbar';
+          hpBar.position.set(0, 5.2, 0);
+          hpBar.scale.set(3.5, 0.45, 1);
+          hpBar.userData.canvas = cv;
+          hpBar.userData.tex = tex;
+          st.mesh.add(hpBar);
+        }
+        const ratio = Math.max(0, st.data.hp_cur / st.data.hp_max);
+        const cv = hpBar.userData.canvas;
+        const ctx2 = cv.getContext('2d');
+        ctx2.clearRect(0, 0, 256, 32);
+        ctx2.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx2.fillRect(0, 8, 256, 16);
+        const col = ratio > 0.5 ? '#2ecc71' : ratio > 0.25 ? '#f1c40f' : '#e74c3c';
+        ctx2.fillStyle = col;
+        ctx2.fillRect(2, 10, 252 * ratio, 12);
+        hpBar.userData.tex.needsUpdate = true;
+        hpBar.visible = true;
+      } else if (hpBar) hpBar.visible = false;
     }
 
+    // Чат над головой
     if (G.chatHead && st.data.chat_msg) {
       let c = st.mesh.getObjectByName('chat');
       if (!c) {
         c = makeLabelSprite('', '#fff', 'rgba(20,60,120,0.85)', 640, 110, 42);
         c.name = 'chat';
-        c.position.set(0, 7.2, 0);
+        c.position.set(0, 7.4, 0);
         c.scale.set(5.2, 1, 1);
         st.mesh.add(c);
       }
