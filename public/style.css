@@ -16,6 +16,16 @@ canvas { display:block; cursor:crosshair; }
   display:flex; flex-direction:column; gap:8px;
   z-index:10; align-items:flex-end;
 }
+#pingChip {
+  padding:6px 14px; border-radius:12px;
+  font-size:13px; font-weight:700;
+  background:rgba(0,0,0,0.62); backdrop-filter:blur(10px);
+  border:1px solid rgba(255,255,255,0.14);
+  color:#7dff7d;
+  transition:color 0.2s;
+}
+#pingChip.warn { color:#ffe066; }
+#pingChip.bad  { color:#ff7b7b; }
 #speedChip {
   padding:10px 16px; border-radius:12px; font-size:15px; font-weight:700;
   color:#ffe066; background:rgba(0,0,0,0.62); backdrop-filter:blur(10px);
@@ -188,7 +198,6 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.1); margin:16px 0; }
   font-size:13px; outline:none; font-family:inherit; min-width:0; }
 .admin-row button { padding:6px 12px; margin:0; font-size:12px; }
 
-/* Автодополнение ников */
 .nick-input-wrap { position:relative; flex:1; min-width:0; }
 .nick-input-wrap input { width:100%; }
 .nick-dropdown {
@@ -207,7 +216,6 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.1); margin:16px 0; }
 .nick-option:hover, .nick-option.selected {
   background:rgba(155,89,182,0.4);
 }
-.nick-option .nick-hint { font-size:10px; opacity:0.5; margin-left:6px; }
 
 #flash { position:fixed; inset:0; background:rgba(231,76,60,0); pointer-events:none;
   transition:background 0.15s; z-index:5; }
@@ -220,20 +228,14 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.1); margin:16px 0; }
 
 #btnPrestige {
   background: linear-gradient(180deg, #f39c12, #d68910);
-  color: #000;
-  padding: 10px 16px;
-  border-radius: 12px;
-  font-size: 14px;
-  font-weight: 900;
-  cursor: pointer;
-  border: none;
-  box-shadow: 0 3px 0 #8a5a06;
-  width: 100%;
+  color: #000; padding: 10px 16px; border-radius: 12px;
+  font-size: 14px; font-weight: 900; cursor: pointer;
+  border: none; box-shadow: 0 3px 0 #8a5a06; width: 100%;
 }
 #btnPrestige:hover { transform: translateY(-1px); }
 #btnPrestige:active { transform: translateY(1px); box-shadow: 0 0 0 #8a5a06; }
 
-/* ========== МОБИЛЬНОЕ УПРАВЛЕНИЕ ========== */
+/* МОБИЛЬНОЕ УПРАВЛЕНИЕ */
 #mobileControls { display: none; }
 
 @media (pointer: coarse) {
@@ -244,6 +246,7 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.1); margin:16px 0; }
   #rightHud { top: 8px; right: 8px; gap: 4px; }
   #board { min-width: 140px; font-size: 11px; padding: 6px 8px; }
   #speedChip { font-size: 12px; padding: 6px 10px; }
+  #pingChip { font-size: 11px; padding: 4px 10px; }
   .hud-buttons button { font-size: 11px; padding: 6px 10px; }
   #settingsBtn { width: 34px; height: 34px; font-size: 16px; top: 8px; right: 8px; }
   #chatLog { max-width: 200px; bottom: 190px; }

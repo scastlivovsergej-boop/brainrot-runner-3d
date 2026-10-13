@@ -1,23 +1,14 @@
 import * as THREE from 'three';
+import { G, socket, fmt } from './network.js';
+import './input.js';
+import './ui.js';
 
 // ============================================================
-//  УТИЛИТЫ
+//  КОНСТАНТЫ
 // ============================================================
-function fmt(n) {
-  const neg = n < 0; n = Math.abs(n);
-  let s;
-  if (n >= 1e12) s = (n / 1e12).toFixed(2) + 'T';
-  else if (n >= 1e9) s = (n / 1e9).toFixed(2) + 'B';
-  else if (n >= 1e6) s = (n / 1e6).toFixed(2) + 'M';
-  else if (n >= 1e3) s = (n / 1e3).toFixed(2) + 'K';
-  else s = Math.floor(n).toString();
-  return (neg ? '-' : '') + s;
-}
-
 const LANE_HALF = 15, PIT_DEPTH = 4.0;
 const SAFE_X_MIN = -100, SAFE_X_MAX = 150, SAFE_Z_HALF = 80;
 const ROAD_START_X = SAFE_X_MAX;
-const BASE_ZONE_X = 32;
 const SHOP_X = 100, SHOP_Z = 0;
 const PAD_COLS = 6, PAD_XS = [5,10,15,20,25,30], PAD_Z_START = -14, PAD_Z_STEP = 3.5;
 const MAX_PADS = 50;
@@ -27,846 +18,10 @@ function padPos(i) {
   return { x: PAD_XS[c], z: PAD_Z_START + r * PAD_Z_STEP };
 }
 
-const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
-
 // ============================================================
-//  ПРОВЕРКА SOCKET.IO
+//  СЦЕНА
 // ============================================================
-if (typeof io === 'undefined') {
-  document.body.innerHTML = '<div style="padding:40px;font-size:20px;color:#fff;background:#c00">❌ socket.io не загрузился</div>';
-  throw new Error('io not loaded');
-}
-
-// ============================================================
-//  СОКЕТ
-// ============================================================
-const socket = io({ transports: ['websocket', 'polling'] });
-window.socket = socket;
-
-let me = null;
-let serverData = { players:{}, walls:[], brainrots:[], pits:[], top:[], all_nicks:[] };
-let chatShow = true, chatDur = 10, chatHead = true, isAdmin = false;
-
-// Инверсия камеры — глобальные переменные
-window.invertCamX = false;
-window.invertCamY = false;
-try {
-  if (localStorage.getItem('br_invX') === 'true') window.invertCamX = true;
-  if (localStorage.getItem('br_invY') === 'true') window.invertCamY = true;
-  const s1 = localStorage.getItem('br_chatShow');
-  const s2 = localStorage.getItem('br_chatDur');
-  const s3 = localStorage.getItem('br_chatHead');
-  if (s1 !== null) chatShow = s1 === 'true';
-  if (s2 !== null) chatDur = parseInt(s2) || 10;
-  if (s3 !== null) chatHead = s3 === 'true';
-} catch(e){}
-
-// ============================================================
-//  ТОСТЫ
-// ============================================================
-function showToast(text, isErr) {
-  const wrap = document.getElementById('toasts');
-  if (!wrap) return;
-  const el = document.createElement('div');
-  el.className = 'toast' + (isErr ? ' err' : '');
-  el.textContent = text || '';
-  wrap.appendChild(el);
-  setTimeout(() => {
-    el.style.opacity = '0';
-    el.style.transition = 'opacity 0.3s';
-    setTimeout(() => el.remove(), 300);
-  }, 2500);
-}
-window.showToast = showToast;
-
-// ============================================================
-//  СОКЕТ-ОБРАБОТЧИКИ
-// ============================================================
-socket.on('connect', () => showToast('✅ Подключено'));
-socket.on('connect_error', (e) => showToast('Ошибка соединения: ' + e.message, true));
-
-socket.on('init', d => {
-  me = d.you;
-  Object.assign(serverData, d);
-  if (d.all_nicks) serverData.all_nicks = d.all_nicks;
-});
-
-socket.on('state', d => {
-  serverData.players = d.players;
-  serverData.walls = d.walls;
-  serverData.brainrots = d.brainrots;
-  serverData.pits = d.pits;
-  serverData.top = d.top || [];
-});
-
-socket.on('player:hit', d => {
-  if (d.id !== me) return;
-  const f = document.getElementById('flash'), m = document.getElementById('hitMsg');
-  f.style.background = 'rgba(231,76,60,0.55)';
-  m.classList.add('show');
-  setTimeout(() => f.style.background = 'rgba(231,76,60,0)', 140);
-  setTimeout(() => m.classList.remove('show'), 800);
-  const st = playerStates.get(me);
-  if (st) { st.current.set(ROAD_START_X - 15, 0, 0); st.target.set(ROAD_START_X - 15, 0, 0); }
-});
-
-socket.on('auth_res', d => {
-  const errEl = document.getElementById('authErr');
-  if (d.ok) {
-    document.getElementById('authModal').classList.remove('active');
-    isAdmin = !!d.is_admin;
-    errEl.textContent = '';
-  } else {
-    errEl.textContent = d.err || 'Ошибка';
-  }
-});
-
-socket.on('open_admin', () => {
-  document.getElementById('adminModal').classList.add('active');
-  if (isAdmin) {
-    document.getElementById('adminAuthBox').style.display = 'none';
-    document.getElementById('adminPanel').style.display = 'block';
-  } else {
-    document.getElementById('adminAuthBox').style.display = 'block';
-    document.getElementById('adminPanel').style.display = 'none';
-  }
-  // Загружаем список ников
-  loadAllNicks();
-});
-
-socket.on('toast', d => showToast(d.text, !!d.err));
-
-const chatLog = document.getElementById('chatLog');
-socket.on('chat_msg', m => {
-  if (!chatShow) return;
-  const el = document.createElement('div');
-  el.className = 'chat-item';
-  el.innerHTML = `<span class="cn">${esc(m.nick)}</span> <span class="ci">(+${fmt(m.income)}/сек)</span>: ${esc(m.text)}`;
-  chatLog.insertBefore(el, chatLog.firstChild);
-  setTimeout(() => el.remove(), chatDur * 1000);
-});
-function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-
-// ============================================================
-//  ФУНКЦИИ
-// ============================================================
-window.upgradeBase = function() {
-  socket.emit('upgrade_base', {}, (resp) => {});
-};
-
-function buySpeed(kind) {
-  socket.emit('buy_speed', { kind }, (resp) => {});
-}
-
-window.admCmd = function(cmd) {
-  const nick = document.getElementById('admNick').value.trim() || (serverData.players[me] && serverData.players[me].name) || '';
-  const payload = { cmd, nick };
-  if (cmd === 'money') payload.value = parseFloat(document.getElementById('admMoney').value) || 0;
-  else if (cmd === 'income_bonus') payload.value = parseFloat(document.getElementById('admInc').value) || 0;
-  else if (cmd === 'speed') payload.value = parseInt(document.getElementById('admSpeed').value) || 0;
-  else if (cmd === 'prestige') payload.value = parseInt(document.getElementById('admPrestige').value) || 0;
-  else if (cmd === 'slots') payload.value = parseInt(document.getElementById('admSlots').value) || 10;
-  else if (cmd === 'set_password') payload.value = document.getElementById('admPass').value.trim();
-  else if (cmd === 'reset_player') {
-    if (!confirm('Точно СБРОСИТЬ ВСЕ данные игрока?\n\nДеньги, скорость, верити, цены, престиж — всё обнулится!')) return;
-  }
-  else if (cmd === 'pad') {
-    payload.idx = parseInt(document.getElementById('admPad').value) || 0;
-    payload.value = parseInt(document.getElementById('admPadVal').value) || 0;
-    payload.income = parseFloat(document.getElementById('admPadInc').value) || 0;
-  } else if (cmd === 'pad_clear') {
-    payload.cmd = 'pad';
-    payload.idx = parseInt(document.getElementById('admPad').value) || 0;
-    payload.value = 0;
-    payload.income = 0;
-  }
-  socket.emit('admin_cmd', payload, (resp) => {});
-};
-
-window.adminSubmit = function() {
-  const pwd = document.getElementById('adminPass').value;
-  socket.emit('admin_auth', { password: pwd }, (resp) => {
-    if (resp && resp.ok) {
-      isAdmin = true;
-      document.getElementById('adminAuthBox').style.display = 'none';
-      document.getElementById('adminPanel').style.display = 'block';
-      loadAllNicks();
-    } else {
-      document.getElementById('adminErr').textContent = (resp && resp.err) || 'Неверно';
-    }
-  });
-};
-
-window.admLoad = function() {
-  const nick = document.getElementById('admNick').value.trim() || (serverData.players[me] && serverData.players[me].name) || '';
-  socket.emit('admin_get_player', { nick }, (resp) => {
-    if (resp && resp.ok) {
-      const d = resp.data;
-      document.getElementById('admMoney').value = d.money;
-      document.getElementById('admInc').value = d.income_bonus;
-      document.getElementById('admSpeed').value = d.speed_bonus;
-      document.getElementById('admSlots').value = d.base_slots || 10;
-      document.getElementById('admPrestige').value = d.prestige || 0;
-      showToast('Загружено: ' + d.nick);
-    } else {
-      showToast((resp && resp.err) || 'Не найден', true);
-    }
-  });
-};
-
-window.closeSettings = function(){ document.getElementById('settingsModal').classList.remove('active'); };
-
-// ============================================================
-//  КНОПКИ
-// ============================================================
-document.getElementById('btnPad').addEventListener('click', window.upgradeBase);
-
-// ПРЕСТИЖ
-const prestigeModal = document.getElementById('prestigeModal');
-const prestigeInfo = document.getElementById('prestigeInfo');
-const prestigeConfirmBtn = document.getElementById('prestigeConfirmBtn');
-
-function openPrestigeModal() {
-  const my = serverData.players[me];
-  if (!my) return;
-  const curPrestige = my.prestige || 0;
-  const curMult = (my.income_multiplier || 1).toFixed(1);
-  const nextPrestige = curPrestige + 1;
-  const nextMult = (1 + 0.5 * nextPrestige).toFixed(1);
-  const threshold = my.prestige_threshold;
-  const curBonus = my.speed_pct - 100;
-  const padsUsed = (my.base_pads || []).filter(Boolean).length;
-  const can = my.can_prestige;
-
-  prestigeInfo.innerHTML =
-    `<b>Текущий престиж:</b> ${curPrestige}<br>` +
-    `<b>Множитель сейчас:</b> ×${curMult}<br>` +
-    `<b>Следующий престиж:</b> ${nextPrestige} → ×${nextMult}<br>` +
-    `<hr style="margin:10px 0">` +
-    `<b>Нужно скорости:</b> +${threshold}%<br>` +
-    `<b>У тебя сейчас:</b> +${curBonus}% ${can ? '✅' : '❌'}<br>` +
-    `<hr style="margin:10px 0">` +
-    `⚠ <b>Потеряешь:</b><br>` +
-    `• скорость: +${curBonus}%<br>` +
-    `• деньги: ${fmt(my.money)}💰<br>` +
-    `• верити на базе: ${padsUsed} шт.<br>` +
-    `• цены в магазине сбросятся`;
-
-  prestigeConfirmBtn.disabled = !can;
-  prestigeConfirmBtn.textContent = can
-    ? `Подтвердить престиж ${nextPrestige} → ×${nextMult}`
-    : `Нужно ещё +${Math.max(0, threshold - curBonus)}%`;
-  prestigeModal.classList.add('active');
-}
-
-document.getElementById('btnPrestige').addEventListener('click', openPrestigeModal);
-document.getElementById('prestigeClose').addEventListener('click', () => {
-  prestigeModal.classList.remove('active');
-});
-prestigeModal.addEventListener('click', (e) => {
-  if (e.target.id === 'prestigeModal') prestigeModal.classList.remove('active');
-});
-prestigeConfirmBtn.addEventListener('click', () => {
-  socket.emit('do_prestige', {}, (resp) => {
-    if (resp && resp.ok) prestigeModal.classList.remove('active');
-  });
-});
-
-document.getElementById('shopClose').addEventListener('click', () => {
-  socket.emit('close_shop');
-});
-document.getElementById('shopModal').addEventListener('click', e => {
-  if (e.target.id === 'shopModal') socket.emit('close_shop');
-});
-document.querySelectorAll('.sc-btn').forEach(btn => {
-  btn.addEventListener('click', () => buySpeed(parseInt(btn.dataset.kind)));
-});
-
-// ============================================================
-//  AUTH UI
-// ============================================================
-let authTab = 'login';
-document.querySelectorAll('.auth-tab').forEach(t => {
-  t.addEventListener('click', () => {
-    document.querySelectorAll('.auth-tab').forEach(x => x.classList.remove('active'));
-    t.classList.add('active');
-    authTab = t.dataset.tab;
-    document.getElementById('authSubmit').textContent = authTab === 'login' ? 'Войти' : 'Создать';
-    document.getElementById('authErr').textContent = '';
-  });
-});
-document.getElementById('authSubmit').addEventListener('click', () => {
-  const nick = document.getElementById('authNick').value.trim();
-  const pass = document.getElementById('authPass').value;
-  if (!nick || !pass) { document.getElementById('authErr').textContent = 'Заполни всё'; return; }
-  if (nick.length < 2) { document.getElementById('authErr').textContent = 'Ник слишком короткий'; return; }
-  if (pass.length < 3) { document.getElementById('authErr').textContent = 'Пароль минимум 3 символа'; return; }
-  document.getElementById('authErr').textContent = 'Подожди...';
-  socket.emit('auth', { nick, password: pass, is_new: authTab === 'register' });
-});
-document.getElementById('authPass').addEventListener('keydown', e => {
-  if (e.key === 'Enter') document.getElementById('authSubmit').click();
-});
-document.getElementById('authNick').addEventListener('keydown', e => {
-  if (e.key === 'Enter') document.getElementById('authPass').focus();
-});
-document.getElementById('authTogglePass').addEventListener('click', () => {
-  const inp = document.getElementById('authPass');
-  const btn = document.getElementById('authTogglePass');
-  const show = inp.type === 'password';
-  inp.type = show ? 'text' : 'password';
-  btn.textContent = show ? '🙈' : '👁';
-});
-document.getElementById('adminTogglePass').addEventListener('click', () => {
-  const inp = document.getElementById('adminPass');
-  const btn = document.getElementById('adminTogglePass');
-  const show = inp.type === 'password';
-  inp.type = show ? 'text' : 'password';
-  btn.textContent = show ? '🙈' : '👁';
-});
-document.getElementById('adminSubmit').addEventListener('click', window.adminSubmit);
-document.getElementById('admLoad').addEventListener('click', window.admLoad);
-document.getElementById('adminClose').addEventListener('click', () => {
-  document.getElementById('adminModal').classList.remove('active');
-});
-document.getElementById('settingsClose').addEventListener('click', () => {
-  document.getElementById('settingsModal').classList.remove('active');
-});
-document.getElementById('settingsBtn').addEventListener('click', () => {
-  document.getElementById('settingsModal').classList.add('active');
-});
-
-document.getElementById('setChatOn').checked = chatShow;
-document.getElementById('setChatHead').checked = chatHead;
-document.getElementById('setDur').value = chatDur;
-document.getElementById('setDurVal').textContent = chatDur;
-document.getElementById('setInvX').checked = window.invertCamX;
-document.getElementById('setInvY').checked = window.invertCamY;
-
-document.getElementById('setChatOn').addEventListener('change', e => {
-  chatShow = e.target.checked; if (!chatShow) chatLog.innerHTML = '';
-  try { localStorage.setItem('br_chatShow', chatShow); } catch(_){}
-});
-document.getElementById('setDur').addEventListener('input', e => {
-  chatDur = parseInt(e.target.value);
-  document.getElementById('setDurVal').textContent = chatDur;
-  try { localStorage.setItem('br_chatDur', chatDur); } catch(_){}
-});
-document.getElementById('setChatHead').addEventListener('change', e => {
-  chatHead = e.target.checked;
-  try { localStorage.setItem('br_chatHead', chatHead); } catch(_){}
-});
-document.getElementById('setInvX').addEventListener('change', e => {
-  window.invertCamX = e.target.checked;
-  try { localStorage.setItem('br_invX', window.invertCamX); } catch(_){}
-  showToast('Инверсия X: ' + (window.invertCamX ? 'ВКЛ' : 'ВЫКЛ'));
-});
-document.getElementById('setInvY').addEventListener('change', e => {
-  window.invertCamY = e.target.checked;
-  try { localStorage.setItem('br_invY', window.invertCamY); } catch(_){}
-  showToast('Инверсия Y: ' + (window.invertCamY ? 'ВКЛ' : 'ВЫКЛ'));
-});
-
-// ============================================================
-//  АВТОДОПОЛНЕНИЕ НИКОВ В АДМИНКЕ
-// ============================================================
-const admNickInput = document.getElementById('admNick');
-const admNickDropdown = document.getElementById('admNickDropdown');
-let nickSelectedIdx = -1;
-
-function renderNickDropdown(filter) {
-  const all = serverData.all_nicks || [];
-  const f = (filter || '').toLowerCase();
-  const list = all.filter(n => n.toLowerCase().includes(f)).slice(0, 20);
-  if (!list.length) {
-    admNickDropdown.classList.remove('active');
-    return;
-  }
-  admNickDropdown.innerHTML = list.map(n =>
-    `<div class="nick-option" data-nick="${n}">${n}</div>`
-  ).join('');
-  admNickDropdown.querySelectorAll('.nick-option').forEach(el => {
-    el.addEventListener('mousedown', (ev) => {
-      ev.preventDefault();
-      admNickInput.value = el.dataset.nick;
-      admNickDropdown.classList.remove('active');
-    });
-  });
-  admNickDropdown.classList.add('active');
-  nickSelectedIdx = -1;
-}
-
-admNickInput.addEventListener('focus', () => renderNickDropdown(admNickInput.value));
-admNickInput.addEventListener('input', () => renderNickDropdown(admNickInput.value));
-admNickInput.addEventListener('blur', () => {
-  setTimeout(() => admNickDropdown.classList.remove('active'), 150);
-});
-admNickInput.addEventListener('keydown', (e) => {
-  const opts = admNickDropdown.querySelectorAll('.nick-option');
-  if (e.key === 'Tab' || e.key === 'ArrowDown') {
-    e.preventDefault();
-    if (!admNickDropdown.classList.contains('active')) {
-      renderNickDropdown(admNickInput.value);
-    }
-    if (opts.length) {
-      nickSelectedIdx = (nickSelectedIdx + 1) % opts.length;
-      opts.forEach((el, i) => el.classList.toggle('selected', i === nickSelectedIdx));
-      admNickInput.value = opts[nickSelectedIdx].dataset.nick;
-    }
-  } else if (e.key === 'Enter') {
-    if (nickSelectedIdx >= 0 && opts[nickSelectedIdx]) {
-      admNickInput.value = opts[nickSelectedIdx].dataset.nick;
-      admNickDropdown.classList.remove('active');
-      nickSelectedIdx = -1;
-    }
-  } else if (e.key === 'Escape') {
-    admNickDropdown.classList.remove('active');
-    nickSelectedIdx = -1;
-  }
-});
-
-function loadAllNicks() {
-  socket.emit('admin_list_nicks', {}, (resp) => {
-    if (resp && resp.ok) {
-      serverData.all_nicks = resp.nicks || [];
-    }
-  });
-}
-
-// ============================================================
-//  ВВОД
-// ============================================================
-const keys = { w:false, s:false, a:false, d:false, dx:0, dz:0 };
-let speedLimit = null;
-let holdE = false, holdD = false, prevHoldE = false;
-let camYaw = 0, camPitch = 0.28, rmbDown = false;
-let chatFocused = false;
-
 const canvas = document.getElementById('game');
-if (canvas) {
-  canvas.addEventListener('contextmenu', e => e.preventDefault());
-  canvas.addEventListener('mousedown', e => {
-    if (chatFocused) return;
-    if (e.button === 2) {
-      rmbDown = true;
-      if (canvas.requestPointerLock) canvas.requestPointerLock();
-    }
-  });
-  document.addEventListener('mouseup', e => {
-    if (e.button === 2) {
-      rmbDown = false;
-      if (document.exitPointerLock) document.exitPointerLock();
-    }
-  });
-  document.addEventListener('mousemove', e => {
-    if (!rmbDown || chatFocused) return;
-    const mx = window.invertCamX ? -e.movementX : e.movementX;
-    const my = window.invertCamY ? -e.movementY : e.movementY;
-    camYaw   -= mx * 0.004;
-    camPitch -= my * 0.004;
-    camPitch = Math.max(-0.35, Math.min(0.9, camPitch));
-  });
-}
-
-function recomputeLocal() {
-  // Локальные оси: fwd (вперёд), side (вправо)
-  let fwd = 0, side = 0;
-  if (keys.w) fwd += 1;
-  if (keys.s) fwd -= 1;
-  if (keys.d) side += 1;
-  if (keys.a) side -= 1;
-
-  // Камера смотрит в направлении (cos(camYaw), sin(camYaw)) в плоскости XZ
-  const cosY = Math.cos(camYaw), sinY = Math.sin(camYaw);
-  let dx = fwd * cosY + side * sinY;
-  let dz = fwd * sinY - side * cosY;
-
-  const len = Math.hypot(dx, dz);
-  if (len > 1) { dx /= len; dz /= len; }
-  keys.dx = dx;
-  keys.dz = dz;
-}
-
-function sendInput(extra) {
-  socket.emit('input', {
-    dx: keys.dx, dz: keys.dz,
-    hold_e: holdE, hold_d: holdD,
-    speed_limit: speedLimit,
-    ...(extra || {})
-  });
-}
-function recompute() {
-  recomputeLocal();
-  sendInput();
-}
-const K = e => e.key.toLowerCase();
-addEventListener('keydown', e => {
-  if (chatFocused) return;
-  const k = K(e);
-  if (['w','ц','arrowup'].includes(k)) keys.w = true;
-  if (['s','ы','arrowdown'].includes(k)) keys.s = true;
-  if (['a','ф','arrowleft'].includes(k)) keys.a = true;
-  if (['d','в','arrowright'].includes(k)) keys.d = true;
-  if (k === ' ') { e.preventDefault(); sendInput({ jump: true }); return; }
-  if (k === 't' || k === 'е') { e.preventDefault(); openChat(); return; }
-  if (k === 'e' || k === 'у') {
-    holdE = true;
-    if (!prevHoldE) {
-      const p = serverData.players[me];
-      if (p && p.shop_open) socket.emit('close_shop');
-    }
-    prevHoldE = true;
-  }
-  if (k === 'd' || k === 'в') holdD = true;
-  recompute();
-});
-addEventListener('keyup', e => {
-  if (chatFocused) return;
-  const k = K(e);
-  if (['w','ц','arrowup'].includes(k)) keys.w = false;
-  if (['s','ы','arrowdown'].includes(k)) keys.s = false;
-  if (['a','ф','arrowleft'].includes(k)) keys.a = false;
-  if (['d','в','arrowright'].includes(k)) keys.d = false;
-  if (k === 'e' || k === 'у') { holdE = false; prevHoldE = false; }
-  if (k === 'd' || k === 'в') holdD = false;
-  recompute();
-});
-setInterval(() => sendInput(), 120);
-
-function openChat() {
-  chatFocused = true;
-  const w = document.getElementById('chatInputWrap');
-  w.classList.add('active');
-  const inp = document.getElementById('chatInput');
-  inp.value = '';
-  setTimeout(() => inp.focus(), 10);
-  keys.w = keys.a = keys.s = keys.d = false;
-  recompute();
-}
-function closeChat() {
-  chatFocused = false;
-  document.getElementById('chatInputWrap').classList.remove('active');
-  document.getElementById('chatInput').blur();
-}
-document.getElementById('chatInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    const v = e.target.value.trim();
-    if (v) socket.emit('chat', { text: v });
-    closeChat();
-  } else if (e.key === 'Escape') closeChat();
-  e.stopPropagation();
-});
-
-// ============================================================
-//  ПЕРЕКЛЮЧАТЕЛЬ СКОРОСТИ
-// ============================================================
-const ssWrap = document.getElementById('speedSwitch');
-const ssNormal = document.getElementById('ssNormal');
-const ssCustom = document.getElementById('ssCustom');
-const ssSliderWrap = document.getElementById('ssSliderWrap');
-const ssSlider = document.getElementById('ssSlider');
-const ssSliderVal = document.getElementById('ssSliderVal');
-
-function refreshSpeedSwitch() {
-  const p = serverData.players[me];
-  if (!p) return;
-  const maxPct = p.speed_pct || 100;
-
-  if (maxPct < 150) {
-    ssWrap.classList.remove('active');
-    if (speedLimit !== null) {
-      speedLimit = null;
-      sendInput();
-    }
-    return;
-  }
-
-  ssWrap.classList.add('active');
-  ssSlider.max = maxPct;
-
-  if (speedLimit === null) {
-    ssNormal.classList.remove('on');
-    ssCustom.classList.remove('on');
-    ssSliderWrap.classList.remove('active');
-    ssSliderVal.textContent = 'MAX ' + maxPct + '%';
-  } else if (speedLimit === 100) {
-    ssNormal.classList.add('on');
-    ssCustom.classList.remove('on');
-    ssSliderWrap.classList.remove('active');
-    ssSliderVal.textContent = '100%';
-  } else {
-    ssNormal.classList.remove('on');
-    ssCustom.classList.add('on');
-    ssSliderWrap.classList.add('active');
-    if (parseInt(ssSlider.value) !== speedLimit) ssSlider.value = speedLimit;
-    ssSliderVal.textContent = speedLimit + '%';
-  }
-}
-ssNormal.addEventListener('click', () => { speedLimit = 100; sendInput(); refreshSpeedSwitch(); });
-ssCustom.addEventListener('click', () => {
-  const maxPct = (serverData.players[me] && serverData.players[me].speed_pct) || 100;
-  if (speedLimit === null || speedLimit === 100) speedLimit = maxPct;
-  sendInput(); refreshSpeedSwitch();
-});
-ssSlider.addEventListener('input', () => {
-  speedLimit = parseInt(ssSlider.value);
-  ssSliderVal.textContent = speedLimit + '%';
-  sendInput();
-});
-setInterval(refreshSpeedSwitch, 200);
-
-// ============================================================
-//  HUD ОБНОВЛЕНИЕ
-// ============================================================
-setInterval(() => {
-  const my = serverData.players[me];
-  if (!my) return;
-
-  const stateLabel = { ground: '🏃 на земле', pit: '🕳 в яме' }[my.state] || my.state;
-  document.getElementById('hud').innerHTML =
-    `<b>${my.name}</b><br>` +
-    `💰 <b>${fmt(my.money)}</b><br>` +
-    `<span style="color:#7dff7d">⚡ +${fmt(my.income_sec)}/сек</span><br>` +
-    `🎒 ${my.carry_n}/1<br>` +
-    `📍 ${Math.floor(my.x)} м<br>` +
-    `${stateLabel}<br>` +
-    (my.prestige > 0
-      ? `⭐ Престиж <b>${my.prestige}</b> · ×${(my.income_multiplier || 1).toFixed(1)}<br>`
-      : '') +
-    `<span class="hint">WASD · SPACE · T — чат · E — действия</span>`;
-  document.getElementById('speedChip').innerHTML =
-    `⚡ ${my.speed_pct_active || my.speed_pct}% / ${my.speed_pct}%`;
-
-  const topList = serverData.top || [];
-  document.getElementById('board').innerHTML =
-    '<b>🏆 Топ</b><br>' +
-    topList.slice(0, 8).map((pl, i) => {
-      const medal = ['🥇','🥈','🥉'][i] || (i+1) + '.';
-      const isMe = pl.name === my.name;
-      return `${medal} ${isMe ? '<b>' : ''}${pl.name}${isMe ? '</b>' : ''} — ${fmt(pl.money)}💰`;
-    }).join('<br>');
-
-  const btnPad = document.getElementById('btnPad');
-  if (btnPad) {
-    const full = my.base_slots >= MAX_PADS;
-    btnPad.disabled = full;
-    btnPad.textContent = full ? '🏁 50/50' : `🏠 +1 Пэд (${fmt(my.base_upgrade_cost)}💰)`;
-  }
-
-  const btnPrestige = document.getElementById('btnPrestige');
-  if (btnPrestige) {
-    btnPrestige.style.display = 'block';
-    const curBonus = my.speed_pct - 100;
-    const threshold = my.prestige_threshold;
-    if (my.can_prestige) {
-      btnPrestige.textContent = `⭐ Престиж ${my.prestige + 1} доступен!`;
-      btnPrestige.style.background = 'linear-gradient(180deg,#f1c40f,#d68910)';
-      btnPrestige.style.color = '#000';
-    } else {
-      btnPrestige.textContent = `⭐ Престиж (${curBonus}/${threshold})`;
-      btnPrestige.style.background = 'linear-gradient(180deg,#666,#444)';
-      btnPrestige.style.color = '#aaa';
-    }
-  }
-
-  if (!isTouchDevice) {
-    const wrap = document.getElementById('actionWrap');
-    const label = document.getElementById('actionLabel');
-    const bar = document.getElementById('actionBar');
-    const fill = document.getElementById('actionFill');
-    let hint = null, progress = 0;
-    if (my.shop_open) hint = null;
-    else if (my.near_shop) { hint = '🏪 Зажмите <b>E</b> — открыть магазин'; progress = my.shop_progress; }
-    else if (my.near_brainrot) { hint = '📦 Зажмите <b>E</b> — подобрать верити'; progress = my.pick_progress; }
-    else if (my.place_progress > 0) { hint = '🏠 Поставить на пэд...'; progress = my.place_progress; }
-    else if (my.destroy_idx >= 0) { hint = '🗑 Зажмите <b>D</b> — удалить верити'; progress = my.destroy_progress; }
-    if (hint) {
-      wrap.classList.add('active');
-      label.innerHTML = hint;
-      bar.style.display = 'block';
-      fill.style.width = Math.round(progress * 100) + '%';
-    } else {
-      wrap.classList.remove('active');
-    }
-  }
-
-  const shopModal = document.getElementById('shopModal');
-  if (my.shop_open) {
-    shopModal.classList.add('active');
-    document.getElementById('shopSpeedVal').textContent = my.speed_pct + '%';
-    document.getElementById('scp1').textContent = fmt(my.cost_1) + '💰';
-    document.getElementById('scp5').textContent = fmt(my.cost_5) + '💰';
-    document.getElementById('scp10').textContent = fmt(my.cost_10) + '💰';
-    document.querySelectorAll('.sc-btn').forEach(btn => {
-      const kind = parseInt(btn.dataset.kind);
-      const cost = kind === 1 ? my.cost_1 : kind === 5 ? my.cost_5 : my.cost_10;
-      btn.disabled = my.money < cost;
-    });
-  } else {
-    shopModal.classList.remove('active');
-  }
-}, 100);
-
-// ============================================================
-//  МОБИЛЬНОЕ УПРАВЛЕНИЕ
-// ============================================================
-if (isTouchDevice) {
-  const joy = document.getElementById('joystick');
-  const knob = document.getElementById('joystickKnob');
-  let joyActive = false;
-  let joyId = null;
-  let centerX = 0, centerY = 0;
-
-  function joyStart(e) {
-    const t = e.changedTouches[0];
-    joyId = t.identifier;
-    joyActive = true;
-    const r = joy.getBoundingClientRect();
-    centerX = r.left + r.width / 2;
-    centerY = r.top + r.height / 2;
-    joyMove(e);
-  }
-  function joyMove(e) {
-    if (!joyActive) return;
-    const t = Array.from(e.changedTouches).find(x => x.identifier === joyId);
-    if (!t) return;
-    const dx = t.clientX - centerX;
-    const dy = t.clientY - centerY;
-    const r = joy.offsetWidth / 2;
-    const dist = Math.min(Math.hypot(dx, dy), r);
-    const angle = Math.atan2(dy, dx);
-    const kx = Math.cos(angle) * dist;
-    const ky = Math.sin(angle) * dist;
-    knob.style.transform = `translate(calc(-50% + ${kx}px), calc(-50% + ${ky}px))`;
-
-    const nx = kx / r;
-    const ny = ky / r;
-    // Вверх (ny<0) = вперёд
-    keys.w = ny < -0.25;
-    keys.s = ny > 0.25;
-    keys.d = nx > 0.25;
-    keys.a = nx < -0.25;
-    recompute();
-  }
-  function joyEnd(e) {
-    const t = Array.from(e.changedTouches).find(x => x.identifier === joyId);
-    if (!t) return;
-    joyActive = false; joyId = null;
-    knob.style.transform = 'translate(-50%,-50%)';
-    keys.w = keys.a = keys.s = keys.d = false;
-    recompute();
-  }
-  joy.addEventListener('touchstart', joyStart, { passive: true });
-  joy.addEventListener('touchmove', joyMove, { passive: true });
-  joy.addEventListener('touchend', joyEnd);
-  joy.addEventListener('touchcancel', joyEnd);
-
-  document.getElementById('mobJump').addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    sendInput({ jump: true });
-  });
-
-  const mobE = document.getElementById('mobActionE');
-  const mobD = document.getElementById('mobActionD');
-  const mobEIcon = document.getElementById('mobActionEIcon');
-  const mobELabel = document.getElementById('mobActionELabel');
-  const mobDIcon = document.getElementById('mobActionDIcon');
-  const mobDLabel = document.getElementById('mobActionDLabel');
-  const mobProgressE = document.getElementById('mobProgressE').firstElementChild;
-  const mobProgressD = document.getElementById('mobProgressD').firstElementChild;
-
-  mobE.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    const p = serverData.players[me];
-    if (p && p.shop_open) {
-      socket.emit('close_shop');
-      return;
-    }
-    holdE = true;
-    sendInput();
-  });
-  mobE.addEventListener('touchend', (e) => { e.preventDefault(); holdE = false; sendInput(); });
-  mobE.addEventListener('touchcancel', () => { holdE = false; sendInput(); });
-
-  mobD.addEventListener('touchstart', (e) => { e.preventDefault(); holdD = true; sendInput(); });
-  mobD.addEventListener('touchend', (e) => { e.preventDefault(); holdD = false; sendInput(); });
-  mobD.addEventListener('touchcancel', () => { holdD = false; sendInput(); });
-
-  let camTouchId = null;
-  let camLastX = 0, camLastY = 0;
-  document.addEventListener('touchstart', (e) => {
-    for (const t of e.changedTouches) {
-      if (t.target.closest('#joystick') ||
-          t.target.closest('#mobileButtons') ||
-          t.target.closest('.mob-action-btn')) continue;
-      if (camTouchId === null) {
-        camTouchId = t.identifier;
-        camLastX = t.clientX;
-        camLastY = t.clientY;
-      }
-    }
-  }, { passive: true });
-  document.addEventListener('touchmove', (e) => {
-    for (const t of e.changedTouches) {
-      if (t.identifier !== camTouchId) continue;
-      const dx = t.clientX - camLastX;
-      const dy = t.clientY - camLastY;
-      const mx = window.invertCamX ? -dx : dx;
-      const my = window.invertCamY ? -dy : dy;
-      camYaw   -= mx * 0.006;
-      camPitch -= my * 0.006;
-      camPitch = Math.max(-0.35, Math.min(0.9, camPitch));
-      camLastX = t.clientX;
-      camLastY = t.clientY;
-    }
-  }, { passive: true });
-  document.addEventListener('touchend', (e) => {
-    for (const t of e.changedTouches) {
-      if (t.identifier === camTouchId) camTouchId = null;
-    }
-  });
-
-  setInterval(() => {
-    const my = serverData.players[me];
-    if (!my) return;
-
-    const canShop = my.near_shop && !my.shop_open;
-    const canCloseShop = my.shop_open;
-    const canPick = my.near_brainrot && !my.shop_open;
-
-    if (canCloseShop) {
-      mobE.style.display = 'flex';
-      mobEIcon.textContent = '❌';
-      mobELabel.textContent = 'Закрыть';
-      mobProgressE.style.width = '0%';
-    } else if (canShop) {
-      mobE.style.display = 'flex';
-      mobEIcon.textContent = '🏪';
-      mobELabel.textContent = 'Магазин';
-      mobProgressE.style.width = Math.round((my.shop_progress || 0) * 100) + '%';
-    } else if (canPick) {
-      mobE.style.display = 'flex';
-      mobEIcon.textContent = '📦';
-      mobELabel.textContent = 'Подобрать';
-      mobProgressE.style.width = Math.round((my.pick_progress || 0) * 100) + '%';
-    } else {
-      mobE.style.display = 'none';
-    }
-
-    if (my.destroy_idx >= 0) {
-      mobD.style.display = 'flex';
-      mobDIcon.textContent = '🗑';
-      mobDLabel.textContent = 'Удалить';
-      mobProgressD.style.width = Math.round((my.destroy_progress || 0) * 100) + '%';
-    } else {
-      mobD.style.display = 'none';
-    }
-  }, 100);
-}
-
-// ============================================================
-//  3D СЦЕНА
-// ============================================================
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -896,6 +51,9 @@ sun.shadow.camera.far = 300;
 sun.shadow.bias = -0.0005;
 scene.add(sun, sun.target);
 
+// ============================================================
+//  ЛЕЙБЛЫ
+// ============================================================
 function makeLabelSprite(text, color='#fff', bg='rgba(0,0,0,0.55)', w=640, h=160, fs=74) {
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
   const c = cv.getContext('2d');
@@ -970,7 +128,9 @@ function makeMultiline(lines, w=512, h=384) {
   return spr;
 }
 
-// ТЕРРЕЙН
+// ============================================================
+//  ТЕРРЕЙН
+// ============================================================
 let terrainGroup = null, lastTerrainKey = '';
 function makeGrassTex() {
   const cv = document.createElement('canvas'); cv.width = 128; cv.height = 128;
@@ -1049,7 +209,9 @@ function rebuildTerrain(pits) {
   scene.add(terrainGroup);
 }
 
-// ЗАБОРЫ
+// ============================================================
+//  ЗАБОРЫ
+// ============================================================
 const fenceMat = new THREE.MeshLambertMaterial({ color: 0x8b5a2b });
 function addFence(x1, z1, x2, z2) {
   const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
@@ -1079,7 +241,9 @@ addFence(SAFE_X_MAX, LANE_HALF, 4000, LANE_HALF);
   scene.add(lbl);
 }
 
-// БАЗА
+// ============================================================
+//  БАЗА
+// ============================================================
 const baseGroup = new THREE.Group(); scene.add(baseGroup);
 const WALL_H = 12, BASE_W = 32, BASE_D = 32, BASE_CX = 16;
 const wallMat = new THREE.MeshLambertMaterial({ color: 0xb9b9c8 });
@@ -1124,7 +288,9 @@ baseSign.position.set(BASE_CX, WALL_H + 3.5, 0);
 baseSign.scale.set(14, 3.5, 1);
 baseGroup.add(baseSign);
 
-// ПЭДЫ
+// ============================================================
+//  ПЭДЫ
+// ============================================================
 const padGroup = new THREE.Group(); scene.add(padGroup);
 const padEmptyMat = new THREE.MeshBasicMaterial({ color: 0x6666aa, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
 const padSelectedMat = new THREE.MeshBasicMaterial({ color: 0xff2222, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
@@ -1140,7 +306,9 @@ for (let i = 0; i < MAX_PADS; i++) {
   padMeshes.push(m);
 }
 
-// ВЕРИТИ
+// ============================================================
+//  ВЕРИТИ
+// ============================================================
 const basePadMeshes = new Map(), basePadLabels = new Map();
 
 function makeSmileyVarity(color, scale, sparkle) {
@@ -1233,7 +401,9 @@ function removePadVisual(idx) {
   if (l) { padGroup.remove(l); basePadLabels.delete(idx); }
 }
 
-// МАГАЗИН (NPC)
+// ============================================================
+//  МАГАЗИН
+// ============================================================
 const shopGroup = new THREE.Group();
 {
   const bodyMat = new THREE.MeshLambertMaterial({ color: 0x9b59b6 });
@@ -1258,14 +428,18 @@ const shopGroup = new THREE.Group();
   scene.add(shopGroup);
 }
 
-// ГОЛОГРАММА ТОПА
+// ============================================================
+//  ГОЛОГРАММА ТОПА
+// ============================================================
 const topBoard = makeMultiline([{ text: '🏆 ТОП', size: 42, color: '#ffe066' }]);
 topBoard.position.set(35, 14, 30);
 topBoard.scale.set(14, 10, 1);
 scene.add(topBoard);
 let lastTopJson = '';
 
-// ПЕРСОНАЖ
+// ============================================================
+//  ПЕРСОНАЖ
+// ============================================================
 function makeHumanoid(shirtColor, isMe) {
   const g = new THREE.Group();
   const skinMat = new THREE.MeshLambertMaterial({ color: 0xf5cba7 });
@@ -1312,6 +486,7 @@ function makeHumanoid(shirtColor, isMe) {
   }
   return g;
 }
+
 function makeWallMesh(color, label, zWidth) {
   const g = new THREE.Group();
   const body = new THREE.Mesh(
@@ -1334,10 +509,9 @@ function makeWallMesh(color, label, zWidth) {
   return g;
 }
 
-// СОСТОЯНИЯ
-const playerStates = new Map();
-const wallStates = new Map();
-const brainrotStates = new Map();
+// ============================================================
+//  ГРУППЫ
+// ============================================================
 const playerGroup = new THREE.Group();
 const wallGroup = new THREE.Group();
 const brainrotGroup = new THREE.Group();
@@ -1345,11 +519,11 @@ scene.add(playerGroup, wallGroup, brainrotGroup);
 
 function updateFromServer() {
   const seen = new Set();
-  for (const id in serverData.players) {
-    const p = serverData.players[id];
+  for (const id in G.serverData.players) {
+    const p = G.serverData.players[id];
     seen.add(id);
-    let st = playerStates.get(id);
-    const isMe = id === me;
+    let st = G.playerStates.get(id);
+    const isMe = id === G.me;
     if (!st) {
       const mesh = makeHumanoid(isMe ? 0x00b8e5 : 0xe55599, isMe);
       playerGroup.add(mesh);
@@ -1359,36 +533,36 @@ function updateFromServer() {
         target: new THREE.Vector3(p.x, p.y || 0, p.z),
         data: p, isMe, lastInfo: ''
       };
-      playerStates.set(id, st);
+      G.playerStates.set(id, st);
     }
     st.target.set(p.x, p.y || 0, p.z);
     st.data = p;
   }
-  for (const [id, st] of playerStates) {
-    if (!seen.has(id)) { playerGroup.remove(st.mesh); playerStates.delete(id); }
+  for (const [id, st] of G.playerStates) {
+    if (!seen.has(id)) { playerGroup.remove(st.mesh); G.playerStates.delete(id); }
   }
 
   const seenW = new Set();
-  for (const w of serverData.walls) {
+  for (const w of G.serverData.walls) {
     seenW.add(w.id);
-    let st = wallStates.get(w.id);
+    let st = G.wallStates.get(w.id);
     if (!st) {
       const mesh = makeWallMesh(w.color, w.label, w.w);
       wallGroup.add(mesh);
       st = { mesh, current: new THREE.Vector3(w.x, 0, w.z), target: new THREE.Vector3(w.x, 0, w.z), data: w };
-      wallStates.set(w.id, st);
+      G.wallStates.set(w.id, st);
     }
     st.target.set(w.x, 0, w.z);
     st.data = w;
   }
-  for (const [id, st] of wallStates) {
-    if (!seenW.has(id)) { wallGroup.remove(st.mesh); wallStates.delete(id); }
+  for (const [id, st] of G.wallStates) {
+    if (!seenW.has(id)) { wallGroup.remove(st.mesh); G.wallStates.delete(id); }
   }
 
   const seenB = new Set();
-  for (const b of serverData.brainrots) {
+  for (const b of G.serverData.brainrots) {
     seenB.add(b.id);
-    let st = brainrotStates.get(b.id);
+    let st = G.brainrotStates.get(b.id);
     if (!st) {
       const mesh = makeBrainrotMesh(b.income, b.sparkle);
       brainrotGroup.add(mesh);
@@ -1400,17 +574,33 @@ function updateFromServer() {
         bobPhase: Math.random() * Math.PI * 2,
         lastTxt: ''
       };
-      brainrotStates.set(b.id, st);
+      G.brainrotStates.set(b.id, st);
     }
     st.target.set(b.x, 0, b.z);
     st.data = b;
   }
-  for (const [id, st] of brainrotStates) {
-    if (!seenB.has(id)) { brainrotGroup.remove(st.mesh); brainrotStates.delete(id); }
+  for (const [id, st] of G.brainrotStates) {
+    if (!seenB.has(id)) { brainrotGroup.remove(st.mesh); G.brainrotStates.delete(id); }
   }
 }
 
-// ГЛАВНЫЙ ЦИКЛ
+// ============================================================
+//  PLAYER:HIT
+// ============================================================
+socket.on('player:hit', d => {
+  if (d.id !== G.me) return;
+  const f = document.getElementById('flash'), m = document.getElementById('hitMsg');
+  f.style.background = 'rgba(231,76,60,0.55)';
+  m.classList.add('show');
+  setTimeout(() => f.style.background = 'rgba(231,76,60,0)', 140);
+  setTimeout(() => m.classList.remove('show'), 800);
+  const st = G.playerStates.get(G.me);
+  if (st) { st.current.set(ROAD_START_X - 15, 0, 0); st.target.set(ROAD_START_X - 15, 0, 0); }
+});
+
+// ============================================================
+//  ГЛАВНЫЙ ЦИКЛ
+// ============================================================
 const camTarget = new THREE.Vector3(40, 10, 0);
 const camLook = new THREE.Vector3(60, 2.5, 0);
 
@@ -1418,13 +608,13 @@ function frame() {
   requestAnimationFrame(frame);
   const t = performance.now() / 1000;
   updateFromServer();
-  const my = playerStates.get(me);
+  const my = G.playerStates.get(G.me);
 
-  for (const [id, st] of playerStates) {
+  for (const [id, st] of G.playerStates) {
     st.current.lerp(st.target, 0.55);
     st.mesh.position.copy(st.current);
 
-    // Плавный поворот вокруг оси по facing
+    // Плавный поворот по facing
     const targetRot = -(st.data.facing || 0);
     let diff = targetRot - st.mesh.rotation.y;
     while (diff > Math.PI) diff -= Math.PI * 2;
@@ -1468,7 +658,7 @@ function frame() {
       }
     }
 
-    if (chatHead && st.data.chat_msg) {
+    if (G.chatHead && st.data.chat_msg) {
       let c = st.mesh.getObjectByName('chat');
       if (!c) {
         c = makeLabelSprite('', '#fff', 'rgba(20,60,120,0.85)', 640, 110, 42);
@@ -1488,13 +678,13 @@ function frame() {
     }
   }
 
-  for (const [, st] of wallStates) {
+  for (const [, st] of G.wallStates) {
     st.current.lerp(st.target, 0.55);
     st.mesh.position.copy(st.current);
   }
 
   const myPos = my ? my.current : new THREE.Vector3();
-  for (const [, st] of brainrotStates) {
+  for (const [, st] of G.brainrotStates) {
     st.current.lerp(st.target, 0.4);
     st.mesh.position.copy(st.current);
     const body = st.mesh.children[0];
@@ -1544,10 +734,10 @@ function frame() {
     }
   }
 
-  rebuildTerrain(serverData.pits);
+  rebuildTerrain(G.serverData.pits);
 
   {
-    const top = serverData.top || [];
+    const top = G.serverData.top || [];
     const json = JSON.stringify(top);
     if (json !== lastTopJson) {
       const lines = [{ text: '🏆 ТОП ИГРОКОВ', size: 42, color: '#ffe066' }];
@@ -1567,8 +757,8 @@ function frame() {
     const px = my.current.x, pz = my.current.z, py = my.current.y;
     const insideBase = px > -1 && px < 32 && pz > -17 && pz < 17;
     const dist = insideBase ? 9 : 20, height = insideBase ? 4 : 7;
-    const cosY = Math.cos(camYaw), sinY = Math.sin(camYaw);
-    const cosP = Math.cos(camPitch), sinP = Math.sin(camPitch);
+    const cosY = Math.cos(G.camYaw), sinY = Math.sin(G.camYaw);
+    const cosP = Math.cos(G.camPitch), sinP = Math.sin(G.camPitch);
     camTarget.set(px - dist * cosY * cosP, py + height + dist * sinP, pz - dist * sinY * cosP);
     camLook.set(px, py + 2.5, pz);
   }

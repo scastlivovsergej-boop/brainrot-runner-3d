@@ -4,7 +4,7 @@ monkey.patch_all()
 from psycogreen.gevent import patch_psycopg
 patch_psycopg()
 
-import random, threading, time, os, json, hashlib
+import random, threading, time, os, json, hashlib, math
 import psycopg2
 from psycopg2.extras import Json
 from flask import Flask, request
@@ -80,11 +80,8 @@ PAD_Z_START = -14
 PAD_Z_STEP = 3.5
 PAD_RADIUS = 1.9
 
-# Параметры капа для каждого игрока
-PLAYER_BR_CAP = 4              # минимум верити в диапазоне у каждого игрока
-PLAYER_BR_RANGE = (30, 500)    # диапазон впереди игрока
-PLAYER_WALL_CAP = 2            # минимум стен в диапазоне
-PLAYER_WALL_RANGE = (0, 600)
+PLAYER_BR_CAP = 20
+PLAYER_BR_RANGE = (50, 1200)
 
 
 def pad_pos(idx):
@@ -236,7 +233,6 @@ def in_pit(x, margin=0):
 
 
 def spawn_brainrot_near(x_center):
-    """Спавн верити рядом с конкретным x (впереди)."""
     for attempt in range(30):
         x = x_center + PLAYER_BR_RANGE[0] + random.random() * (PLAYER_BR_RANGE[1] - PLAYER_BR_RANGE[0])
         if x < ROAD_START_X + 15:
@@ -289,7 +285,9 @@ def new_player(sid, nick):
         'x': 55.0, 'z': 0.0, 'y': 0.0,
         'state': 'ground',
         'jump_t': 0.0, 'jump_from_y': 0.0,
-        'dx': 0.0, 'dz': 0.0, 'last_dx': 1,
+        'dx': 0.0, 'dz': 0.0,
+        'facing': 0.0,
+        'last_dx': 1,
         'money': 0.0, 'carrying': [],
         'base_slots': BASE_START_SLOTS,
         'base_pads': [None] * BASE_MAX_SLOTS,
@@ -321,6 +319,7 @@ def light_player(p):
     return {
         'id': p['id'], 'name': p['name'],
         'x': round(p['x'], 2), 'z': round(p['z'], 2), 'y': round(p['y'], 2),
+        'facing': round(p.get('facing', 0.0), 3),
         'state': p['state'],
         'money': round(p['money'], 2),
         'income_sec': total_income(p),
@@ -416,6 +415,9 @@ def step(dt):
         zmax = SAFE_Z_HALF if p['x'] < ROAD_START_X else LANE_HALF
         p['z'] = max(-zmax, min(zmax, p['z'] + PLAYER_STRAFE * p['dz'] * dt))
 
+        if p['dx'] != 0 or p['dz'] != 0:
+            p['facing'] = math.atan2(p['dz'], p['dx'])
+
         if p['jump_t'] <= 0:
             if p['state'] == 'ground' and p['x'] > ROAD_START_X and p['invuln'] <= 0:
                 if in_pit(p['x']):
@@ -433,10 +435,6 @@ def step(dt):
         else:
             p['y'] = 0
 
-        if p['dx'] != 0:
-            p['last_dx'] = 1 if p['dx'] > 0 else -1
-
-        # магазин
         near_shop = (p['x'] - SHOP_X) ** 2 + (p['z'] - SHOP_Z) ** 2 < SHOP_RADIUS ** 2
         if not near_shop:
             p['shop_open'] = False
@@ -449,7 +447,6 @@ def step(dt):
         elif not p['shop_open']:
             p['shop_t'] = max(0.0, p['shop_t'] - dt * 2)
 
-        # подбор
         near_br_id = None
         best_d = 25
         for br_id, br in state['brainrots'].items():
@@ -479,7 +476,6 @@ def step(dt):
             if p['pick_t'] <= 0:
                 p['pick_target'] = None
 
-        # размещение
         if p['carrying'] and p['x'] < 32 and -16 < p['z'] < 16 and p['state'] == 'ground':
             idx = pad_at(p['x'], p['z'])
             if idx is not None and idx < p['base_slots'] and p['base_pads'][idx] is None:
@@ -498,7 +494,6 @@ def step(dt):
         else:
             p['place_t'] = max(0.0, p['place_t'] - dt * 3)
 
-        # удаление
         if p['x'] < 32 and -16 < p['z'] < 16 and p['state'] == 'ground':
             if p['destroy_idx'] >= 0 and p['destroy_idx'] < p['base_slots'] and p['base_pads'][p['destroy_idx']]:
                 if p['hold_d']:
@@ -517,21 +512,20 @@ def step(dt):
             p['destroy_idx'] = -1
             p['destroy_t'] = 0
 
-    # === Спавн стен для КАЖДОГО игрока ===
+    # стены для каждого игрока
     for p in state['players'].values():
         if not p['authenticated']:
             continue
         p['wall_timer'] -= dt
-        if p['wall_timer'] <= 0 and p['x'] > ROAD_START_X + 30:
-            # есть ли стены в зоне впереди игрока?
-            front_walls = [w for w in state['walls'] if p['x'] < w['x'] < p['x'] + 600]
-            if not front_walls and len(state['walls']) < 15:
+        if p['wall_timer'] <= 0 and p['x'] > ROAD_START_X + 20:
+            front_walls = [w for w in state['walls']
+                           if p['x'] + 30 < w['x'] < p['x'] + 500]
+            if not front_walls and len(state['walls']) < 40:
                 spawn_wall_pack_near(p['x'])
-                p['wall_timer'] = 4.0 + random.random() * 3.0
+                p['wall_timer'] = 1.5 + random.random() * 1.5
             else:
-                p['wall_timer'] = 1.0
+                p['wall_timer'] = 0.4
 
-    # движение стен
     alive = []
     for w in state['walls']:
         w['x'] -= w['speed'] * dt
@@ -549,19 +543,16 @@ def step(dt):
             alive.append(w)
     state['walls'] = alive
 
-    # доход
     for p in state['players'].values():
         if not p['authenticated']:
             continue
         inc = total_income(p)
         p['money'] += inc * dt
 
-    # истечение верити
     for br_id in list(state['brainrots'].keys()):
         if state['brainrots'][br_id]['expire_at'] <= now:
             del state['brainrots'][br_id]
 
-    # === Спавн верити для каждого игрока ===
     state['br_check_timer'] -= dt
     if state['br_check_timer'] <= 0:
         state['br_check_timer'] = 1.0
@@ -576,7 +567,6 @@ def step(dt):
                 if not spawn_brainrot_near(p['x']):
                     break
 
-    # обрезаем далёкие ямы
     mpx = max_player_x()
     state['pits'] = [pt for pt in state['pits']
                      if pt['x'] < ROAD_START_X + 3000
@@ -595,7 +585,6 @@ def step(dt):
         ],
         'pits': state['pits'][:80],
         'top': top,
-        'all_nicks': get_all_nicks(),
     })
 
 
@@ -634,7 +623,6 @@ def build_state_payload():
         ],
         'pits': state['pits'][:80],
         'top': get_top(),
-        'all_nicks': get_all_nicks(),
     }
 
 
@@ -680,8 +668,12 @@ def on_connect():
             'shop': {'x': SHOP_X, 'z': SHOP_Z},
             'pad_cols': PAD_COLS, 'pad_xs': PAD_XS,
             'pad_z_start': PAD_Z_START, 'pad_z_step': PAD_Z_STEP,
-            'all_nicks': get_all_nicks(),
         }, to=sid)
+
+
+@socketio.on('ping_check')
+def on_ping_check(data=None):
+    return {'ok': True, 't': time.time()}
 
 
 @socketio.on('check_nick')
@@ -792,6 +784,16 @@ def on_admin_auth(data):
             return {'ok': True}
         socketio.emit('toast', {'text': 'Неверный пароль', 'err': True}, to=sid)
         return {'ok': False, 'err': 'Неверный пароль'}
+
+
+@socketio.on('admin_list_nicks')
+def on_admin_list_nicks():
+    sid = request.sid
+    with lock:
+        p = state['players'].get(sid)
+        if not p or not p.get('is_admin'):
+            return {'ok': False, 'nicks': []}
+        return {'ok': True, 'nicks': get_all_nicks()}
 
 
 @socketio.on('admin_get_player')
