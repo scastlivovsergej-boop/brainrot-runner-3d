@@ -27,7 +27,6 @@ canvas { display:block; cursor:crosshair; }
   cursor:pointer; border:none;
   box-shadow:0 3px 0 rgba(0,0,0,0.4);
 }
-#btnShop { background:linear-gradient(180deg,#9b59b6,#7d3c98); color:#fff; }
 #btnPad  { background:linear-gradient(180deg,#2ecc71,#27ae60); color:#fff; }
 .hud-buttons button:hover:not(:disabled) { transform:translateY(-1px); }
 .hud-buttons button:active:not(:disabled) { transform:translateY(1px); box-shadow:0 0 0 rgba(0,0,0,0.4); }
@@ -62,22 +61,6 @@ button {
 button:disabled { background:#444; color:#888; cursor:not-allowed; box-shadow:0 2px 0 #222; }
 .hint { font-size:12px; opacity:0.7; margin-top:6px; display:block; }
 
-/* ===== Панель базы (снизу) ===== */
-#basePanel {
-  position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
-  padding:14px 18px; border-radius:14px; text-align:center; display:none;
-  font-size:14px; line-height:1.6; max-width:660px;
-  background:rgba(0,0,0,0.62); backdrop-filter:blur(10px);
-  border:1px solid rgba(255,255,255,0.14); z-index:10;
-  box-shadow:0 8px 24px rgba(0,0,0,0.3);
-}
-#basePanel button {
-  margin-top:10px; padding:12px 24px; font-size:14px; font-weight:700;
-  border-radius:10px;
-}
-#basePanel .hint { font-size:12px; opacity:0.7; margin-top:8px; display:block; }
-
-/* ===== Плашка E/D ===== */
 #actionWrap {
   position:fixed; left:50%; bottom:110px; transform:translateX(-50%) translateY(20px);
   display:none; flex-direction:column; align-items:center; gap:8px;
@@ -147,7 +130,6 @@ button:disabled { background:#444; color:#888; cursor:not-allowed; box-shadow:0 
 .modal-inner h2, .shop-inner h2 { margin:0 0 16px; font-size:24px;
   color:#d8b4fe; letter-spacing:0.5px; }
 
-/* МАГАЗИН */
 .shop-hint { font-size:14px; opacity:0.9; margin-bottom:18px; }
 .shop-hint b { color:#ffe066; font-size:18px; }
 .shop-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; margin-top:10px; }
@@ -169,7 +151,6 @@ button:disabled { background:#444; color:#888; cursor:not-allowed; box-shadow:0 
 .shop-card[data-kind="10"] .sc-btn { background:linear-gradient(180deg,#e74c3c,#c0392b); }
 .sc-btn:disabled { background:#333 !important; color:#777 !important; }
 
-/* AUTH */
 .auth-tabs { display:flex; gap:8px; margin-bottom:16px; }
 .auth-tab { flex:1; padding:10px; background:rgba(255,255,255,0.06);
   border-radius:10px; cursor:pointer; font-weight:700; font-size:14px; }
@@ -191,7 +172,6 @@ button:disabled { background:#444; color:#888; cursor:not-allowed; box-shadow:0 
   background:linear-gradient(180deg,#9b59b6,#7d3c98) !important;
   box-shadow:0 3px 0 #4a235a !important; margin:0; color:#fff; }
 
-/* SETTINGS */
 .set-row { display:flex; justify-content:space-between; align-items:center;
   margin:12px 0; gap:12px; font-size:14px; }
 .set-row label { text-align:left; }
@@ -201,7 +181,6 @@ button:disabled { background:#444; color:#888; cursor:not-allowed; box-shadow:0 
 .set-help { font-size:13px; line-height:1.7; opacity:0.85; text-align:left; }
 hr { border:none; border-top:1px solid rgba(255,255,255,0.1); margin:16px 0; }
 
-/* ADMIN */
 .admin-row { display:flex; gap:8px; align-items:center; margin:8px 0; font-size:13px; }
 .admin-row label { flex:0 0 130px; text-align:left; }
 .admin-row input { flex:1; padding:6px 10px; background:rgba(255,255,255,0.08);
@@ -217,6 +196,7 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.1); margin:16px 0; }
   opacity:0; pointer-events:none; transition:opacity 0.25s, transform 0.25s;
   z-index:6; letter-spacing:1px; }
 #hitMsg.show { opacity:1; transform:translate(-50%,-50%) scale(1); }
+
 #btnPrestige {
   background: linear-gradient(180deg, #f39c12, #d68910);
   color: #000;
@@ -231,3 +211,137 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.1); margin:16px 0; }
 }
 #btnPrestige:hover { transform: translateY(-1px); }
 #btnPrestige:active { transform: translateY(1px); box-shadow: 0 0 0 #8a5a06; }
+
+/* ========== МОБИЛЬНОЕ УПРАВЛЕНИЕ ========== */
+#mobileControls { display: none; }
+
+@media (pointer: coarse) {
+  #mobileControls { display: block; }
+  #hud .hint { display: none !important; }
+  #actionWrap { display: none !important; }
+  #hud { min-width: 0; max-width: 180px; font-size: 12px; padding: 8px 10px; }
+  #rightHud { top: 8px; right: 8px; gap: 4px; }
+  #board { min-width: 140px; font-size: 11px; padding: 6px 8px; }
+  #speedChip { font-size: 12px; padding: 6px 10px; }
+  .hud-buttons button { font-size: 11px; padding: 6px 10px; }
+  #settingsBtn { width: 34px; height: 34px; font-size: 16px; top: 8px; right: 8px; }
+  #chatLog { max-width: 200px; bottom: 190px; }
+  .chat-item { font-size: 11px; padding: 4px 8px; }
+}
+
+/* --- Джойстик --- */
+#joystick {
+  position: fixed;
+  left: 18px;
+  bottom: 18px;
+  width: 150px;
+  height: 150px;
+  z-index: 25;
+  touch-action: none;
+  user-select: none;
+}
+#joystickBase {
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 20, 30, 0.5);
+  border: 3px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+#joystickKnob {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 66px; height: 66px;
+  background: radial-gradient(circle at 30% 30%, #fff, #9ec5ff);
+  border: 3px solid rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+/* --- Кнопки прыжка --- */
+#mobileButtons {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: flex-end;
+}
+.mob-btn {
+  width: 84px; height: 84px;
+  border-radius: 50%;
+  background: rgba(46, 204, 113, 0.75);
+  border: 3px solid rgba(255, 255, 255, 0.55);
+  color: #fff;
+  font-size: 34px; font-weight: 900;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: manipulation;
+  user-select: none;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  padding: 0; margin: 0;
+  font-family: system-ui, sans-serif;
+}
+.mob-btn:active {
+  background: rgba(46, 204, 113, 1);
+  transform: scale(0.95);
+}
+
+/* --- Всплывающие кнопки действий (E / D) --- */
+.mob-action-btn {
+  position: fixed;
+  z-index: 25;
+  min-width: 148px;
+  padding: 14px 20px 20px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #f1c40f, #d4ac0d);
+  border: 3px solid rgba(255, 255, 255, 0.6);
+  color: #000;
+  font-size: 16px; font-weight: 900;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  touch-action: manipulation;
+  user-select: none;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+  animation: mobPop 0.2s ease-out;
+  font-family: system-ui, sans-serif;
+}
+.mob-action-btn.danger {
+  background: linear-gradient(180deg, #e74c3c, #c0392b);
+  color: #fff;
+}
+.mob-action-btn:active { transform: scale(0.96); }
+.mob-action-btn > span:first-child {
+  font-size: 30px;
+  line-height: 1;
+}
+.mob-action-btn > span:nth-child(2) {
+  font-size: 14px;
+  line-height: 1.2;
+}
+#mobActionE { right: 18px; bottom: 180px; }
+#mobActionD { right: 18px; bottom: 180px; }
+.mob-progress {
+  position: absolute;
+  left: 6px; right: 6px; bottom: 6px;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.mob-progress > div {
+  height: 100%;
+  width: 0%;
+  background: #fff;
+  transition: width 0.05s linear;
+}
+@keyframes mobPop {
+  from { opacity: 0; transform: scale(0.7); }
+  to   { opacity: 1; transform: scale(1); }
+}

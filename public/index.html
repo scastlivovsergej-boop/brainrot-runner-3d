@@ -2,8 +2,9 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Brainrot Runner 3D</title>
-<link rel="stylesheet" href="style.css?v=101">
+<link rel="stylesheet" href="style.css?v=102">
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
@@ -19,7 +20,7 @@
   <div class="hud-buttons">
     <button id="btnPad">🏠 +1 Пэд</button>
   </div>
-    <button id="btnPrestige" style="display:none">⭐ Престиж</button>
+  <button id="btnPrestige" style="display:none">⭐ Престиж</button>
   <div id="speedSwitch">
     <div class="ss-row">
       <label>Скорость:</label>
@@ -39,13 +40,10 @@
   <div id="actionBar"><div id="actionFill"></div></div>
 </div>
 
-
-
-
 <div id="chatLog"></div>
 <div id="chatInputWrap">
   <span id="chatPrefix">&gt;</span>
-  <input id="chatInput" maxlength="200" autocomplete="off" placeholder="Сообщение... (Enter — отправить, Esc — отмена)">
+  <input id="chatInput" maxlength="200" autocomplete="off" placeholder="Сообщение...">
 </div>
 
 <button id="settingsBtn" title="Настройки">⚙</button>
@@ -206,10 +204,31 @@
   </div>
 </div>
 
+<!-- ========== МОБИЛЬНОЕ УПРАВЛЕНИЕ ========== -->
+<div id="mobileControls">
+  <div id="joystick">
+    <div id="joystickBase"></div>
+    <div id="joystickKnob"></div>
+  </div>
+  <div id="mobileButtons">
+    <button class="mob-btn" id="mobJump" title="Прыжок">⤴</button>
+  </div>
+  <button class="mob-action-btn" id="mobActionE" style="display:none">
+    <span id="mobActionEIcon">📦</span>
+    <span id="mobActionELabel">Подобрать</span>
+    <div class="mob-progress" id="mobProgressE"><div></div></div>
+  </button>
+  <button class="mob-action-btn danger" id="mobActionD" style="display:none">
+    <span id="mobActionDIcon">🗑</span>
+    <span id="mobActionDLabel">Удалить</span>
+    <div class="mob-progress" id="mobProgressD"><div></div></div>
+  </button>
+</div>
+
 <div id="toasts"></div>
 <div id="flash"></div>
 <div id="hitMsg">💥 Отбросило!</div>
 
-<script type="module" src="game.js?v=101"></script>
+<script type="module" src="game.js?v=102"></script>
 </body>
 </html>

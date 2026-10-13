@@ -28,6 +28,11 @@ function padPos(i) {
 }
 
 // ============================================================
+//  МОБИЛЬНОЕ ОПРЕДЕЛЕНИЕ
+// ============================================================
+const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+// ============================================================
 //  ПРОВЕРКА SOCKET.IO
 // ============================================================
 if (typeof io === 'undefined') {
@@ -119,7 +124,6 @@ socket.on('open_admin', () => {
   }
 });
 
-// ⬇️ ЕДИНСТВЕННЫЙ источник тостов — серверный emit
 socket.on('toast', d => showToast(d.text, !!d.err));
 
 const chatLog = document.getElementById('chatLog');
@@ -134,7 +138,7 @@ socket.on('chat_msg', m => {
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // ============================================================
-//  ФУНКЦИИ (без showToast в ack — сервер сам шлёт toast)
+//  ФУНКЦИИ
 // ============================================================
 window.upgradeBase = function() {
   socket.emit('upgrade_base', {}, (resp) => {});
@@ -175,7 +179,6 @@ window.adminSubmit = function() {
       isAdmin = true;
       document.getElementById('adminAuthBox').style.display = 'none';
       document.getElementById('adminPanel').style.display = 'block';
-      // showToast не вызываем — сервер сам шлёт toast
     } else {
       document.getElementById('adminErr').textContent = (resp && resp.err) || 'Неверно';
     }
@@ -191,7 +194,7 @@ window.admLoad = function() {
       document.getElementById('admInc').value = d.income_bonus;
       document.getElementById('admSpeed').value = d.speed_bonus;
       document.getElementById('admSlots').value = d.base_slots || 10;
-      showToast('Загружено: ' + d.nick);   // тут серверный toast не приходит — оставляем
+      showToast('Загружено: ' + d.nick);
     } else {
       showToast((resp && resp.err) || 'Не найден', true);
     }
@@ -253,7 +256,6 @@ prestigeModal.addEventListener('click', (e) => {
 prestigeConfirmBtn.addEventListener('click', () => {
   socket.emit('do_prestige', {}, (resp) => {
     if (resp && resp.ok) prestigeModal.classList.remove('active');
-    // showToast не вызываем — сервер сам шлёт toast
   });
 });
 
@@ -520,13 +522,12 @@ setInterval(() => {
     `📍 ${Math.floor(my.x)} м<br>` +
     `${stateLabel}<br>` +
     (my.prestige > 0
-      ? `⭐ Престиж <b>${my.prestige}</b> · доход <b style="color:#ffe066">×${(my.income_multiplier || 1).toFixed(1)}</b><br>`
+      ? `⭐ Престиж <b>${my.prestige}</b> · ×${(my.income_multiplier || 1).toFixed(1)}<br>`
       : '') +
     `<span class="hint">WASD · SPACE · T — чат · E — действия</span>`;
   document.getElementById('speedChip').innerHTML =
     `⚡ ${my.speed_pct_active || my.speed_pct}% / ${my.speed_pct}%`;
 
-  // ============ ТОП ============
   const topList = serverData.top || [];
   document.getElementById('board').innerHTML =
     '<b>🏆 Топ</b><br>' +
@@ -543,7 +544,6 @@ setInterval(() => {
     btnPad.textContent = full ? '🏁 50/50' : `🏠 +1 Пэд (${fmt(my.base_upgrade_cost)}💰)`;
   }
 
-  // Кнопка престижа — ВСЕГДА видна
   const btnPrestige = document.getElementById('btnPrestige');
   if (btnPrestige) {
     btnPrestige.style.display = 'block';
@@ -560,27 +560,28 @@ setInterval(() => {
     }
   }
 
-  // Плашка E/D
-  const wrap = document.getElementById('actionWrap');
-  const label = document.getElementById('actionLabel');
-  const bar = document.getElementById('actionBar');
-  const fill = document.getElementById('actionFill');
-  let hint = null, progress = 0;
-  if (my.shop_open) hint = null;
-  else if (my.near_shop) { hint = '🏪 Зажмите <b>E</b> — открыть магазин'; progress = my.shop_progress; }
-  else if (my.near_brainrot) { hint = '📦 Зажмите <b>E</b> — подобрать верити'; progress = my.pick_progress; }
-  else if (my.place_progress > 0) { hint = '🏠 Поставить на пэд...'; progress = my.place_progress; }
-  else if (my.destroy_idx >= 0) { hint = '🗑 Зажмите <b>D</b> — удалить верити'; progress = my.destroy_progress; }
-  if (hint) {
-    wrap.classList.add('active');
-    label.innerHTML = hint;
-    bar.style.display = 'block';
-    fill.style.width = Math.round(progress * 100) + '%';
-  } else {
-    wrap.classList.remove('active');
+  // Плашка E/D (только на ПК)
+  if (!isTouchDevice) {
+    const wrap = document.getElementById('actionWrap');
+    const label = document.getElementById('actionLabel');
+    const bar = document.getElementById('actionBar');
+    const fill = document.getElementById('actionFill');
+    let hint = null, progress = 0;
+    if (my.shop_open) hint = null;
+    else if (my.near_shop) { hint = '🏪 Зажмите <b>E</b> — открыть магазин'; progress = my.shop_progress; }
+    else if (my.near_brainrot) { hint = '📦 Зажмите <b>E</b> — подобрать верити'; progress = my.pick_progress; }
+    else if (my.place_progress > 0) { hint = '🏠 Поставить на пэд...'; progress = my.place_progress; }
+    else if (my.destroy_idx >= 0) { hint = '🗑 Зажмите <b>D</b> — удалить верити'; progress = my.destroy_progress; }
+    if (hint) {
+      wrap.classList.add('active');
+      label.innerHTML = hint;
+      bar.style.display = 'block';
+      fill.style.width = Math.round(progress * 100) + '%';
+    } else {
+      wrap.classList.remove('active');
+    }
   }
 
-  // Модалка магазина
   const shopModal = document.getElementById('shopModal');
   if (my.shop_open) {
     shopModal.classList.add('active');
@@ -597,6 +598,175 @@ setInterval(() => {
     shopModal.classList.remove('active');
   }
 }, 100);
+
+// ============================================================
+//  МОБИЛЬНОЕ УПРАВЛЕНИЕ
+// ============================================================
+if (isTouchDevice) {
+  // ---------- ДЖОЙСТИК ----------
+  const joy = document.getElementById('joystick');
+  const knob = document.getElementById('joystickKnob');
+  let joyActive = false;
+  let joyId = null;
+  let centerX = 0, centerY = 0;
+
+  function joyStart(e) {
+    const t = e.changedTouches[0];
+    joyId = t.identifier;
+    joyActive = true;
+    const r = joy.getBoundingClientRect();
+    centerX = r.left + r.width / 2;
+    centerY = r.top + r.height / 2;
+    joyMove(e);
+  }
+  function joyMove(e) {
+    if (!joyActive) return;
+    const t = Array.from(e.changedTouches).find(x => x.identifier === joyId);
+    if (!t) return;
+    const dx = t.clientX - centerX;
+    const dy = t.clientY - centerY;
+    const r = joy.offsetWidth / 2;
+    const dist = Math.min(Math.hypot(dx, dy), r);
+    const angle = Math.atan2(dy, dx);
+    const kx = Math.cos(angle) * dist;
+    const ky = Math.sin(angle) * dist;
+    knob.style.transform = `translate(calc(-50% + ${kx}px), calc(-50% + ${ky}px))`;
+
+    const nx = kx / r;
+    const ny = ky / r;
+    keys.dx = Math.abs(nx) > 0.3 ? (nx > 0 ? 1 : -1) : 0;
+    keys.dz = Math.abs(ny) > 0.3 ? (ny > 0 ? 1 : -1) : 0;
+    sendInput();
+  }
+  function joyEnd(e) {
+    const t = Array.from(e.changedTouches).find(x => x.identifier === joyId);
+    if (!t) return;
+    joyActive = false; joyId = null;
+    knob.style.transform = 'translate(-50%,-50%)';
+    keys.dx = 0; keys.dz = 0;
+    sendInput();
+  }
+  joy.addEventListener('touchstart', joyStart, { passive: true });
+  joy.addEventListener('touchmove', joyMove, { passive: true });
+  joy.addEventListener('touchend', joyEnd);
+  joy.addEventListener('touchcancel', joyEnd);
+
+  // ---------- КНОПКА ПРЫЖКА ----------
+  document.getElementById('mobJump').addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    sendInput({ jump: true });
+  });
+
+  // ---------- ВСПЛЫВАЮЩИЕ КНОПКИ ДЕЙСТВИЙ ----------
+  const mobE = document.getElementById('mobActionE');
+  const mobD = document.getElementById('mobActionD');
+  const mobEIcon = document.getElementById('mobActionEIcon');
+  const mobELabel = document.getElementById('mobActionELabel');
+  const mobDIcon = document.getElementById('mobActionDIcon');
+  const mobDLabel = document.getElementById('mobActionDLabel');
+  const mobProgressE = document.getElementById('mobProgressE').firstElementChild;
+  const mobProgressD = document.getElementById('mobProgressD').firstElementChild;
+
+  mobE.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const p = serverData.players[me];
+    if (p && p.shop_open) {
+      socket.emit('close_shop');
+      return;
+    }
+    holdE = true;
+    sendInput();
+  });
+  mobE.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    holdE = false;
+    sendInput();
+  });
+  mobE.addEventListener('touchcancel', () => { holdE = false; sendInput(); });
+
+  mobD.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    holdD = true;
+    sendInput();
+  });
+  mobD.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    holdD = false;
+    sendInput();
+  });
+  mobD.addEventListener('touchcancel', () => { holdD = false; sendInput(); });
+
+  // ---------- КАМЕРА (свайп) ----------
+  let camTouchId = null;
+  let camLastX = 0, camLastY = 0;
+  document.addEventListener('touchstart', (e) => {
+    for (const t of e.changedTouches) {
+      if (t.target.closest('#joystick') ||
+          t.target.closest('#mobileButtons') ||
+          t.target.closest('.mob-action-btn')) continue;
+      if (camTouchId === null) {
+        camTouchId = t.identifier;
+        camLastX = t.clientX;
+        camLastY = t.clientY;
+      }
+    }
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    for (const t of e.changedTouches) {
+      if (t.identifier !== camTouchId) continue;
+      const dx = t.clientX - camLastX;
+      const dy = t.clientY - camLastY;
+      camYaw -= dx * 0.006;
+      camPitch -= dy * 0.006;
+      camPitch = Math.max(-0.35, Math.min(0.9, camPitch));
+      camLastX = t.clientX;
+      camLastY = t.clientY;
+    }
+  }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === camTouchId) camTouchId = null;
+    }
+  });
+
+  // ---------- ОБНОВЛЕНИЕ ВИДИМОСТИ КНОПОК ----------
+  setInterval(() => {
+    const my = serverData.players[me];
+    if (!my) return;
+
+    const canShop = my.near_shop && !my.shop_open;
+    const canCloseShop = my.shop_open;
+    const canPick = my.near_brainrot && !my.shop_open;
+
+    if (canCloseShop) {
+      mobE.style.display = 'flex';
+      mobEIcon.textContent = '❌';
+      mobELabel.textContent = 'Закрыть';
+      mobProgressE.style.width = '0%';
+    } else if (canShop) {
+      mobE.style.display = 'flex';
+      mobEIcon.textContent = '🏪';
+      mobELabel.textContent = 'Магазин';
+      mobProgressE.style.width = Math.round((my.shop_progress || 0) * 100) + '%';
+    } else if (canPick) {
+      mobE.style.display = 'flex';
+      mobEIcon.textContent = '📦';
+      mobELabel.textContent = 'Подобрать';
+      mobProgressE.style.width = Math.round((my.pick_progress || 0) * 100) + '%';
+    } else {
+      mobE.style.display = 'none';
+    }
+
+    if (my.destroy_idx >= 0) {
+      mobD.style.display = 'flex';
+      mobDIcon.textContent = '🗑';
+      mobDLabel.textContent = 'Удалить';
+      mobProgressD.style.width = Math.round((my.destroy_progress || 0) * 100) + '%';
+    } else {
+      mobD.style.display = 'none';
+    }
+  }, 100);
+}
 
 // ============================================================
 //  3D СЦЕНА
@@ -967,7 +1137,7 @@ function removePadVisual(idx) {
   if (l) { padGroup.remove(l); basePadLabels.delete(idx); }
 }
 
-// МАГАЗИН (NPC)
+// МАГАЗИН
 const shopGroup = new THREE.Group();
 {
   const bodyMat = new THREE.MeshLambertMaterial({ color: 0x9b59b6 });
