@@ -424,3 +424,23 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.1); margin:16px 0; }
 #mobAttack:active {
   background: rgba(231, 76, 60, 1);
 }
+.shield-card {
+  background: rgba(52,152,219,0.12);
+  border: 1.5px solid rgba(52,152,219,0.5);
+  border-radius: 14px;
+  padding: 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+  text-align: left;
+}
+.shield-card.owned {
+  background: rgba(52,152,219,0.25);
+  border-color: #3498db;
+}
+.shield-card .wc-emoji { font-size: 40px; }
+.shield-card .wc-name { font-size: 16px; font-weight: 700; }
+.shield-card .wc-stat { font-size: 12px; opacity: 0.85; }
+.shield-card .wc-price { font-size: 13px; color: #7dff7d; font-weight: 700; }
+.shield-card .wc-buy { margin-left: auto; }

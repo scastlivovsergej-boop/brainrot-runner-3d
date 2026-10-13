@@ -4,8 +4,12 @@ import { G, socket } from './network.js';
 const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 window.isTouchDevice = isTouchDevice;
 
+let chatFocused = false;
+window.__isChatFocused = () => chatFocused;
+window.__setChatFocused = (v) => { chatFocused = v; };
+
 // ============================================================
-//  ПЕРЕСЧЁТ ДВИЖЕНИЯ (относительно камеры)
+//  ПЕРЕСЧЁТ ДВИЖЕНИЯ
 // ============================================================
 export function recomputeLocal() {
   let fwd = 0, side = 0;
@@ -26,13 +30,15 @@ export function recomputeLocal() {
 window.recomputeLocal = recomputeLocal;
 
 export function sendInput(extra) {
-  socket.emit('input', {
-    dx: G.keys.dx, dz: G.keys.dz,
-    hold_e: G.holdE, hold_d: G.holdD,
+  const payload = {
+    dx: chatFocused ? 0 : G.keys.dx,
+    dz: chatFocused ? 0 : G.keys.dz,
+    hold_e: chatFocused ? false : G.holdE,
+    hold_d: chatFocused ? false : G.holdD,
     speed_limit: G.speedLimit,
-    shield: G.shieldActive || false,
     ...(extra || {})
-  });
+  };
+  socket.emit('input', payload);
 }
 window.sendInput = sendInput;
 
@@ -43,29 +49,41 @@ function recompute() {
 window.recompute = recompute;
 
 // ============================================================
-//  КЛАВИАТУРА (ПК)
+//  КЛАВИАТУРА
 // ============================================================
-let chatFocused = false;
-window.__isChatFocused = () => chatFocused;
-window.__setChatFocused = (v) => { chatFocused = v; };
-
 const K = e => e.key.toLowerCase();
 
 addEventListener('keydown', e => {
+  if (e.repeat) return;   // ⬅️ фикс авто-повтора (магазин больше не закроется)
   if (chatFocused) return;
   const k = K(e);
+
   if (['w','ц','arrowup'].includes(k)) G.keys.w = true;
   if (['s','ы','arrowdown'].includes(k)) G.keys.s = true;
   if (['a','ф','arrowleft'].includes(k)) G.keys.a = true;
   if (['d','в','arrowright'].includes(k)) G.keys.d = true;
+
   if (k === ' ') { e.preventDefault(); sendInput({ jump: true }); return; }
   if (k === 't' || k === 'е') { e.preventDefault(); openChat(); return; }
+
   if (k === 'e' || k === 'у') {
     G.holdE = true;
     const p = G.serverData.players[G.me];
     if (p && p.shop_open) socket.emit('close_shop');
   }
   if (k === 'd' || k === 'в') G.holdD = true;
+
+  // V — toggle щита
+  if (k === 'v' || k === 'м') {
+    const p = G.serverData.players[G.me];
+    if (p && p.has_shield) {
+      socket.emit('input', { toggle_shield: true });
+    } else {
+      if (window.showToast) window.showToast('Сначала купи щит в магазине', true);
+    }
+    return;
+  }
+
   recompute();
 });
 
@@ -84,7 +102,7 @@ addEventListener('keyup', e => {
 setInterval(() => sendInput(), 120);
 
 // ============================================================
-//  МЫШЬ (камера + щит + атака)
+//  МЫШЬ (только камера и атака — щита тут больше нет)
 // ============================================================
 const canvas = document.getElementById('game');
 let rmbDown = false;
@@ -95,19 +113,14 @@ if (canvas) {
     if (chatFocused) return;
     if (e.button === 2) {
       rmbDown = true;
-      G.shieldActive = true;
-      sendInput();
       if (canvas.requestPointerLock) canvas.requestPointerLock();
     } else if (e.button === 0) {
-      // атака — отправим в game.js через window hook
       if (window.__tryAttack) window.__tryAttack(e);
     }
   });
   document.addEventListener('mouseup', e => {
     if (e.button === 2) {
       rmbDown = false;
-      G.shieldActive = false;
-      sendInput();
       if (document.exitPointerLock) document.exitPointerLock();
     }
   });
@@ -207,22 +220,17 @@ if (isTouchDevice) {
     sendInput({ jump: true });
   });
 
-  // Щит — зажать
-  const mobShield = document.getElementById('mobShield');
-  mobShield.addEventListener('touchstart', (e) => {
+  // Щит — toggle
+  document.getElementById('mobShield').addEventListener('touchstart', (e) => {
     e.preventDefault();
-    G.shieldActive = true;
-    mobShield.classList.add('on');
-    sendInput();
-  });
-  mobShield.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    G.shieldActive = false;
-    mobShield.classList.remove('on');
-    sendInput();
+    const p = G.serverData.players[G.me];
+    if (p && p.has_shield) {
+      socket.emit('input', { toggle_shield: true });
+    } else {
+      if (window.showToast) window.showToast('Сначала купи щит в магазине', true);
+    }
   });
 
-  // Атака — тапнуть по ближайшему игроку в радиусе 5м
   document.getElementById('mobAttack').addEventListener('touchstart', (e) => {
     e.preventDefault();
     if (window.__attackNearest) window.__attackNearest();
@@ -245,7 +253,6 @@ if (isTouchDevice) {
   mobD.addEventListener('touchend', (e) => { e.preventDefault(); G.holdD = false; sendInput(); });
   mobD.addEventListener('touchcancel', () => { G.holdD = false; sendInput(); });
 
-  // Свайп камеры
   let camTouchId = null;
   let camLastX = 0, camLastY = 0;
   document.addEventListener('touchstart', (e) => {

@@ -73,20 +73,44 @@ window.showToast = showToast;
 //  SOCKET
 // ============================================================
 if (typeof io === 'undefined') {
-  document.body.innerHTML = '<div style="padding:40px;font-size:20px;color:#fff;background:#c00">❌ socket.io не загрузился</div>';
+  document.body.insertAdjacentHTML('beforeend',
+    '<div style="position:fixed;inset:0;padding:40px;font-size:20px;color:#fff;background:#c00;z-index:99999;font-family:monospace">' +
+    '❌ socket.io не загрузился<br><br>Проверь файл <b>/vendor/socket.io.min.js</b> — он должен существовать и быть не пустым.' +
+    '</div>');
   throw new Error('io not loaded');
 }
 
-export const socket = io({ transports: ['websocket', 'polling'] });
+export const socket = io({
+  transports: ['websocket', 'polling'],
+  reconnectionDelay: 2000,
+  reconnectionDelayMax: 10000,
+  timeout: 60000,
+});
 window.socket = socket;
 
-socket.on('connect', () => showToast('✅ Подключено'));
-socket.on('connect_error', (e) => showToast('Ошибка соединения: ' + e.message, true));
+// Debounce тостов чтобы не спамить при переподключении
+let __toastDebounce = 0;
+socket.on('connect', () => {
+  const now = Date.now();
+  if (now - __toastDebounce > 5000) {
+    showToast('✅ Подключено');
+    __toastDebounce = now;
+  }
+});
+socket.on('connect_error', (e) => {
+  const now = Date.now();
+  if (now - __toastDebounce > 5000) {
+    showToast('Ошибка соединения: ' + e.message, true);
+    __toastDebounce = now;
+  }
+});
 
 socket.on('init', d => {
   G.me = d.you;
   Object.assign(G.serverData, d);
   if (d.all_nicks) G.serverData.all_nicks = d.all_nicks;
+  if (d.weapons) window.G.weapons = d.weapons;
+  if (d.armors) window.G.armors = d.armors;
 });
 
 socket.on('state', d => {
@@ -102,9 +126,9 @@ socket.on('auth_res', d => {
   if (d.ok) {
     document.getElementById('authModal').classList.remove('active');
     G.isAdmin = !!d.is_admin;
-    errEl.textContent = '';
+    if (errEl) errEl.textContent = '';
   } else {
-    errEl.textContent = d.err || 'Ошибка';
+    if (errEl) errEl.textContent = d.err || 'Ошибка';
   }
 });
 
@@ -113,7 +137,7 @@ socket.on('toast', d => showToast(d.text, !!d.err));
 // Чат
 const chatLog = document.getElementById('chatLog');
 socket.on('chat_msg', m => {
-  if (!G.chatShow) return;
+  if (!G.chatShow || !chatLog) return;
   const el = document.createElement('div');
   el.className = 'chat-item';
   el.innerHTML = `<span class="cn">${esc(m.nick)}</span> <span class="ci">(+${fmt(m.income)}/сек)</span>: ${esc(m.text)}`;

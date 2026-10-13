@@ -4,10 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Brainrot Runner 3D</title>
-<link rel="stylesheet" href="style.css?v=120">
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<link rel="stylesheet" href="style.css?v=121">
+<script src="/vendor/socket.io.min.js"></script>
 <script type="importmap">
-{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+{ "imports": { "three": "/vendor/three.module.js" } }
+</script>
+<script>
+// Аварийный оверлей — если JS упал при загрузке модулей
+window.addEventListener('error', e => {
+  if (!e.message || document.getElementById('__errbox')) return;
+  document.body.insertAdjacentHTML('beforeend',
+    '<div id="__errbox" style="position:fixed;inset:0;background:rgba(120,0,0,0.95);color:#fff;padding:40px;font:14px monospace;z-index:999999;overflow:auto;white-space:pre-wrap">' +
+    '💥 JS ERROR\n\n' + e.message + '\n' + (e.filename || '') + ':' + (e.lineno || '') +
+    '\n\nОткрой F12 → Console</div>');
+});
+window.addEventListener('unhandledrejection', e => {
+  console.error('Unhandled promise rejection:', e.reason);
+});
 </script>
 </head>
 <body>
@@ -58,7 +71,7 @@
     <div class="shop-tabs">
       <div class="shop-tab active" data-tab="speed">⚡ Скорость</div>
       <div class="shop-tab" data-tab="weapons">⚔️ Оружие</div>
-      <div class="shop-tab" data-tab="armors">🛡️ Броня</div>
+      <div class="shop-tab" data-tab="armor">🛡️ Броня</div>
     </div>
 
     <div class="shop-pane active" id="pane-speed">
@@ -87,7 +100,7 @@
       <div class="shop-grid" id="weaponsGrid"></div>
     </div>
 
-    <div class="shop-pane" id="pane-armors">
+    <div class="shop-pane" id="pane-armor">
       <div class="shop-hint">Броня даёт HP. Щит покупается отдельно, включается на V</div>
       <div id="shieldBox"></div>
       <div class="shop-grid" id="armorsGrid"></div>
@@ -97,8 +110,8 @@
   </div>
 </div>
 
-<!-- АВТОРИЗАЦИЯ -->
-<div id="authModal" class="modal-back active">
+<!-- АВТОРИЗАЦИЯ (без active — ui.js включит сам, если модули загрузятся) -->
+<div id="authModal" class="modal-back">
   <div class="modal-inner">
     <h2>🎮 Вход в игру</h2>
     <div class="auth-tabs">
@@ -286,6 +299,6 @@
 <div id="flash"></div>
 <div id="hitMsg">💥 Отбросило!</div>
 
-<script type="module" src="game.js?v=120"></script>
+<script type="module" src="game.js?v=121"></script>
 </body>
 </html>

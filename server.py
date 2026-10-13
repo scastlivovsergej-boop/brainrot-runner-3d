@@ -10,7 +10,7 @@ from psycopg2.extras import Json
 from flask import Flask, request
 from flask_socketio import SocketIO
 
-DB_URL = 'postgresql://postgres.butcgsmwqyviesojrclq:qJ4iu4Bqwb6AkaFc@aws-0-eu-central-1.pooler.supabase.com:6543/postgres'
+DB_URL = 'postgresql://postgres.butcgsmwqyviesojrclq:qJ4iu4Bqwb6AkaFc@aws-1-eu-central-1.pooler.supabase.com:5432/postgres'
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'public'), static_url_path='')

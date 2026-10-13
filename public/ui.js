@@ -12,7 +12,9 @@ function buySpeed(kind) {
 }
 
 window.admCmd = function(cmd) {
-  const nick = document.getElementById('admNick').value.trim() || (G.serverData.players[G.me] && G.serverData.players[G.me].name) || '';
+  const nickEl = document.getElementById('admNick');
+  const nick = (nickEl && nickEl.value.trim()) ||
+    (G.serverData.players[G.me] && G.serverData.players[G.me].name) || '';
   const payload = { cmd, nick };
   if (cmd === 'money') payload.value = parseFloat(document.getElementById('admMoney').value) || 0;
   else if (cmd === 'income_bonus') payload.value = parseFloat(document.getElementById('admInc').value) || 0;
@@ -53,7 +55,9 @@ window.adminSubmit = function() {
 };
 
 window.admLoad = function() {
-  const nick = document.getElementById('admNick').value.trim() || (G.serverData.players[G.me] && G.serverData.players[G.me].name) || '';
+  const nickEl = document.getElementById('admNick');
+  const nick = (nickEl && nickEl.value.trim()) ||
+    (G.serverData.players[G.me] && G.serverData.players[G.me].name) || '';
   socket.emit('admin_get_player', { nick }, (resp) => {
     if (resp && resp.ok) {
       const d = resp.data;
@@ -139,7 +143,8 @@ document.querySelectorAll('.shop-tab').forEach(t => {
     document.querySelectorAll('.shop-pane').forEach(x => x.classList.remove('active'));
     t.classList.add('active');
     shopTab = t.dataset.tab;
-    document.getElementById('pane-' + shopTab).classList.add('active');
+    const pane = document.getElementById('pane-' + shopTab);
+    if (pane) pane.classList.add('active');
   });
 });
 
@@ -161,7 +166,11 @@ function renderWeapons() {
   if (!grid) return;
   const my = G.serverData.players[G.me];
   if (!my) return;
-  const weapons = G.weapons || [];
+  const weapons = (window.G && window.G.weapons) || G.weapons || [];
+  if (!weapons.length) {
+    grid.innerHTML = '<div style="grid-column:1/-1;opacity:0.5;padding:20px">Загрузка...</div>';
+    return;
+  }
   const myTier = my.weapon_tier || 0;
   grid.innerHTML = weapons.map((w, i) => {
     const owned = i === myTier;
@@ -195,7 +204,11 @@ function renderArmors() {
   if (!grid) return;
   const my = G.serverData.players[G.me];
   if (!my) return;
-  const armors = G.armors || [];
+  const armors = (window.G && window.G.armors) || G.armors || [];
+  if (!armors.length) {
+    grid.innerHTML = '<div style="grid-column:1/-1;opacity:0.5;padding:20px">Загрузка...</div>';
+    return;
+  }
   const myTier = my.armor_tier || 0;
   grid.innerHTML = armors.map((a, i) => {
     const owned = i === myTier;
@@ -229,7 +242,7 @@ function renderShield() {
   if (!box) return;
   const my = G.serverData.players[G.me];
   if (!my) return;
-  const has = my.has_shield;
+  const has = !!my.has_shield;
   if (has) {
     box.innerHTML = `<div class="shield-card owned">
       <div class="wc-emoji">🛡️</div>
@@ -244,7 +257,7 @@ function renderShield() {
       <div style="flex:1">
         <div class="wc-name">Щит</div>
         <div class="wc-stat">−90% урона, но −50% скорости</div>
-        <div class="wc-price">${fmt(1_000_000)}💰</div>
+        <div class="wc-price">${fmt(1000000)}💰</div>
       </div>
       <button class="sc-btn wc-buy" id="buyShieldBtn">Купить</button>
     </div>`;
@@ -256,11 +269,6 @@ function renderShield() {
     });
   }
 }
-
-socket.on('init', (d) => {
-  if (d.weapons) window.G.weapons = d.weapons;
-  if (d.armors) window.G.armors = d.armors;
-});
 
 // ============================================================
 //  АВТОРИЗАЦИЯ
@@ -457,8 +465,7 @@ setInterval(() => {
   document.getElementById('speedChip').innerHTML =
     `⚡ ${my.speed_pct_active || my.speed_pct}% / ${my.speed_pct}%`;
 
-  // Чип оружия / щита
-  const weapons = G.weapons || [];
+  const weapons = (window.G && window.G.weapons) || [];
   const wName = weapons[my.weapon_tier] ? weapons[my.weapon_tier].name : '—';
   const wEmoji = weapons[my.weapon_tier] ? weapons[my.weapon_tier].emoji : '⚔️';
   const chip = document.getElementById('weaponChip');
@@ -614,7 +621,7 @@ function refreshSpeedSwitch() {
     ssWrap.classList.remove('active');
     if (G.speedLimit !== null) {
       G.speedLimit = null;
-      window.sendInput();
+      window.sendInput && window.sendInput();
     }
     return;
   }
@@ -640,15 +647,28 @@ function refreshSpeedSwitch() {
     ssSliderVal.textContent = G.speedLimit + '%';
   }
 }
-ssNormal.addEventListener('click', () => { G.speedLimit = 100; window.sendInput(); refreshSpeedSwitch(); });
+ssNormal.addEventListener('click', () => { G.speedLimit = 100; window.sendInput && window.sendInput(); refreshSpeedSwitch(); });
 ssCustom.addEventListener('click', () => {
   const maxPct = (G.serverData.players[G.me] && G.serverData.players[G.me].speed_pct) || 100;
   if (G.speedLimit === null || G.speedLimit === 100) G.speedLimit = maxPct;
-  window.sendInput(); refreshSpeedSwitch();
+  window.sendInput && window.sendInput();
+  refreshSpeedSwitch();
 });
 ssSlider.addEventListener('input', () => {
   G.speedLimit = parseInt(ssSlider.value);
   ssSliderVal.textContent = G.speedLimit + '%';
-  window.sendInput();
+  window.sendInput && window.sendInput();
 });
 setInterval(refreshSpeedSwitch, 200);
+
+// ============================================================
+//  ПОКАЗЫВАЕМ ОКНО АВТОРИЗАЦИИ ТОЛЬКО ЕСЛИ JS ДОЖИЛ ДО СЮДА
+//  (если что-то упало — будет чистый экран без блюра,
+//   и в F12 сразу будет видно причину)
+// ============================================================
+{
+  const authModal = document.getElementById('authModal');
+  if (authModal && !authModal.classList.contains('active')) {
+    authModal.classList.add('active');
+  }
+}
