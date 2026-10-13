@@ -5,12 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Brainrot Runner 3D</title>
 <link rel="stylesheet" href="style.css?v=121">
-<script src="/vendor/socket.io.min.js"></script>
+<script src="/socket.io.min.js"></script>
 <script type="importmap">
-{ "imports": { "three": "/vendor/three.module.js" } }
+{ "imports": { "three": "/three.module.js" } }
 </script>
 <script>
-// Аварийный оверлей — если JS упал при загрузке модулей
 window.addEventListener('error', e => {
   if (!e.message || document.getElementById('__errbox')) return;
   document.body.insertAdjacentHTML('beforeend',
@@ -71,7 +70,7 @@ window.addEventListener('unhandledrejection', e => {
     <div class="shop-tabs">
       <div class="shop-tab active" data-tab="speed">⚡ Скорость</div>
       <div class="shop-tab" data-tab="weapons">⚔️ Оружие</div>
-      <div class="shop-tab" data-tab="armor">🛡️ Броня</div>
+      <div class="shop-tab" data-tab="armors">🛡️ Броня</div>
     </div>
 
     <div class="shop-pane active" id="pane-speed">
@@ -100,7 +99,7 @@ window.addEventListener('unhandledrejection', e => {
       <div class="shop-grid" id="weaponsGrid"></div>
     </div>
 
-    <div class="shop-pane" id="pane-armor">
+    <div class="shop-pane" id="pane-armors">
       <div class="shop-hint">Броня даёт HP. Щит покупается отдельно, включается на V</div>
       <div id="shieldBox"></div>
       <div class="shop-grid" id="armorsGrid"></div>
