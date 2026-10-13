@@ -51,12 +51,14 @@ window.recompute = recompute;
 // ============================================================
 //  КЛАВИАТУРА
 // ============================================================
-const K = e => e.key.toLowerCase();
+const K = e => (e && typeof e.key === 'string') ? e.key.toLowerCase() : '';
 
 addEventListener('keydown', e => {
-  if (e.repeat) return;   // ⬅️ фикс авто-повтора (магазин больше не закроется)
+  if (!e || !e.key) return;
+  if (e.repeat) return;
   if (chatFocused) return;
   const k = K(e);
+  if (!k) return;
 
   if (['w','ц','arrowup'].includes(k)) G.keys.w = true;
   if (['s','ы','arrowdown'].includes(k)) G.keys.s = true;
@@ -88,8 +90,10 @@ addEventListener('keydown', e => {
 });
 
 addEventListener('keyup', e => {
+  if (!e || !e.key) return;
   if (chatFocused) return;
   const k = K(e);
+  if (!k) return;
   if (['w','ц','arrowup'].includes(k)) G.keys.w = false;
   if (['s','ы','arrowdown'].includes(k)) G.keys.s = false;
   if (['a','ф','arrowleft'].includes(k)) G.keys.a = false;
