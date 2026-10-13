@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 
+// ============================================================
+//  УТИЛИТЫ
+// ============================================================
 function fmt(n) {
   const neg = n < 0; n = Math.abs(n);
   let s;
@@ -26,11 +29,17 @@ function padPos(i) {
 
 const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 
+// ============================================================
+//  ПРОВЕРКА SOCKET.IO
+// ============================================================
 if (typeof io === 'undefined') {
   document.body.innerHTML = '<div style="padding:40px;font-size:20px;color:#fff;background:#c00">❌ socket.io не загрузился</div>';
   throw new Error('io not loaded');
 }
 
+// ============================================================
+//  СОКЕТ
+// ============================================================
 const socket = io({ transports: ['websocket', 'polling'] });
 window.socket = socket;
 
@@ -38,22 +47,23 @@ let me = null;
 let serverData = { players:{}, walls:[], brainrots:[], pits:[], top:[], all_nicks:[] };
 let chatShow = true, chatDur = 10, chatHead = true, isAdmin = false;
 
-// Настройки камеры
-let invertCamX = false, invertCamY = false;
-
+// Инверсия камеры — глобальные переменные
+window.invertCamX = false;
+window.invertCamY = false;
 try {
+  if (localStorage.getItem('br_invX') === 'true') window.invertCamX = true;
+  if (localStorage.getItem('br_invY') === 'true') window.invertCamY = true;
   const s1 = localStorage.getItem('br_chatShow');
   const s2 = localStorage.getItem('br_chatDur');
   const s3 = localStorage.getItem('br_chatHead');
-  const s4 = localStorage.getItem('br_invX');
-  const s5 = localStorage.getItem('br_invY');
   if (s1 !== null) chatShow = s1 === 'true';
   if (s2 !== null) chatDur = parseInt(s2) || 10;
   if (s3 !== null) chatHead = s3 === 'true';
-  if (s4 !== null) invertCamX = s4 === 'true';
-  if (s5 !== null) invertCamY = s5 === 'true';
 } catch(e){}
 
+// ============================================================
+//  ТОСТЫ
+// ============================================================
 function showToast(text, isErr) {
   const wrap = document.getElementById('toasts');
   if (!wrap) return;
@@ -69,17 +79,24 @@ function showToast(text, isErr) {
 }
 window.showToast = showToast;
 
+// ============================================================
+//  СОКЕТ-ОБРАБОТЧИКИ
+// ============================================================
 socket.on('connect', () => showToast('✅ Подключено'));
 socket.on('connect_error', (e) => showToast('Ошибка соединения: ' + e.message, true));
 
-socket.on('init', d => { me = d.you; Object.assign(serverData, d); });
+socket.on('init', d => {
+  me = d.you;
+  Object.assign(serverData, d);
+  if (d.all_nicks) serverData.all_nicks = d.all_nicks;
+});
+
 socket.on('state', d => {
   serverData.players = d.players;
   serverData.walls = d.walls;
   serverData.brainrots = d.brainrots;
   serverData.pits = d.pits;
   serverData.top = d.top || [];
-  if (d.all_nicks) serverData.all_nicks = d.all_nicks;
 });
 
 socket.on('player:hit', d => {
@@ -113,6 +130,8 @@ socket.on('open_admin', () => {
     document.getElementById('adminAuthBox').style.display = 'block';
     document.getElementById('adminPanel').style.display = 'none';
   }
+  // Загружаем список ников
+  loadAllNicks();
 });
 
 socket.on('toast', d => showToast(d.text, !!d.err));
@@ -128,6 +147,9 @@ socket.on('chat_msg', m => {
 });
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+// ============================================================
+//  ФУНКЦИИ
+// ============================================================
 window.upgradeBase = function() {
   socket.emit('upgrade_base', {}, (resp) => {});
 };
@@ -168,6 +190,7 @@ window.adminSubmit = function() {
       isAdmin = true;
       document.getElementById('adminAuthBox').style.display = 'none';
       document.getElementById('adminPanel').style.display = 'block';
+      loadAllNicks();
     } else {
       document.getElementById('adminErr').textContent = (resp && resp.err) || 'Неверно';
     }
@@ -193,8 +216,12 @@ window.admLoad = function() {
 
 window.closeSettings = function(){ document.getElementById('settingsModal').classList.remove('active'); };
 
+// ============================================================
+//  КНОПКИ
+// ============================================================
 document.getElementById('btnPad').addEventListener('click', window.upgradeBase);
 
+// ПРЕСТИЖ
 const prestigeModal = document.getElementById('prestigeModal');
 const prestigeInfo = document.getElementById('prestigeInfo');
 const prestigeConfirmBtn = document.getElementById('prestigeConfirmBtn');
@@ -255,6 +282,9 @@ document.querySelectorAll('.sc-btn').forEach(btn => {
   btn.addEventListener('click', () => buySpeed(parseInt(btn.dataset.kind)));
 });
 
+// ============================================================
+//  AUTH UI
+// ============================================================
 let authTab = 'login';
 document.querySelectorAll('.auth-tab').forEach(t => {
   t.addEventListener('click', () => {
@@ -310,8 +340,9 @@ document.getElementById('setChatOn').checked = chatShow;
 document.getElementById('setChatHead').checked = chatHead;
 document.getElementById('setDur').value = chatDur;
 document.getElementById('setDurVal').textContent = chatDur;
-document.getElementById('setInvX').checked = invertCamX;
-document.getElementById('setInvY').checked = invertCamY;
+document.getElementById('setInvX').checked = window.invertCamX;
+document.getElementById('setInvY').checked = window.invertCamY;
+
 document.getElementById('setChatOn').addEventListener('change', e => {
   chatShow = e.target.checked; if (!chatShow) chatLog.innerHTML = '';
   try { localStorage.setItem('br_chatShow', chatShow); } catch(_){}
@@ -326,15 +357,19 @@ document.getElementById('setChatHead').addEventListener('change', e => {
   try { localStorage.setItem('br_chatHead', chatHead); } catch(_){}
 });
 document.getElementById('setInvX').addEventListener('change', e => {
-  invertCamX = e.target.checked;
-  try { localStorage.setItem('br_invX', invertCamX); } catch(_){}
+  window.invertCamX = e.target.checked;
+  try { localStorage.setItem('br_invX', window.invertCamX); } catch(_){}
+  showToast('Инверсия X: ' + (window.invertCamX ? 'ВКЛ' : 'ВЫКЛ'));
 });
 document.getElementById('setInvY').addEventListener('change', e => {
-  invertCamY = e.target.checked;
-  try { localStorage.setItem('br_invY', invertCamY); } catch(_){}
+  window.invertCamY = e.target.checked;
+  try { localStorage.setItem('br_invY', window.invertCamY); } catch(_){}
+  showToast('Инверсия Y: ' + (window.invertCamY ? 'ВКЛ' : 'ВЫКЛ'));
 });
 
-// === АВТОДОПОЛНЕНИЕ НИКОВ В АДМИНКЕ ===
+// ============================================================
+//  АВТОДОПОЛНЕНИЕ НИКОВ В АДМИНКЕ
+// ============================================================
 const admNickInput = document.getElementById('admNick');
 const admNickDropdown = document.getElementById('admNickDropdown');
 let nickSelectedIdx = -1;
@@ -390,7 +425,17 @@ admNickInput.addEventListener('keydown', (e) => {
   }
 });
 
-// === ВВОД ===
+function loadAllNicks() {
+  socket.emit('admin_list_nicks', {}, (resp) => {
+    if (resp && resp.ok) {
+      serverData.all_nicks = resp.nicks || [];
+    }
+  });
+}
+
+// ============================================================
+//  ВВОД
+// ============================================================
 const keys = { w:false, s:false, a:false, d:false, dx:0, dz:0 };
 let speedLimit = null;
 let holdE = false, holdD = false, prevHoldE = false;
@@ -415,25 +460,27 @@ if (canvas) {
   });
   document.addEventListener('mousemove', e => {
     if (!rmbDown || chatFocused) return;
-    const mx = invertCamX ? -e.movementX : e.movementX;
-    const my = invertCamY ? -e.movementY : e.movementY;
+    const mx = window.invertCamX ? -e.movementX : e.movementX;
+    const my = window.invertCamY ? -e.movementY : e.movementY;
     camYaw   -= mx * 0.004;
     camPitch -= my * 0.004;
     camPitch = Math.max(-0.35, Math.min(0.9, camPitch));
-    recomputeLocal();
   });
 }
 
 function recomputeLocal() {
-  // Поворачиваем вектор движения по camYaw (W всегда идёт "вперёд" от камеры)
+  // Локальные оси: fwd (вперёд), side (вправо)
   let fwd = 0, side = 0;
   if (keys.w) fwd += 1;
   if (keys.s) fwd -= 1;
   if (keys.d) side += 1;
   if (keys.a) side -= 1;
+
+  // Камера смотрит в направлении (cos(camYaw), sin(camYaw)) в плоскости XZ
   const cosY = Math.cos(camYaw), sinY = Math.sin(camYaw);
-  let dx = fwd * cosY - side * sinY;
-  let dz = fwd * sinY + side * cosY;
+  let dx = fwd * cosY + side * sinY;
+  let dz = fwd * sinY - side * cosY;
+
   const len = Math.hypot(dx, dz);
   if (len > 1) { dx /= len; dz /= len; }
   keys.dx = dx;
@@ -510,7 +557,9 @@ document.getElementById('chatInput').addEventListener('keydown', e => {
   e.stopPropagation();
 });
 
-// === ПЕРЕКЛЮЧАТЕЛЬ СКОРОСТИ ===
+// ============================================================
+//  ПЕРЕКЛЮЧАТЕЛЬ СКОРОСТИ
+// ============================================================
 const ssWrap = document.getElementById('speedSwitch');
 const ssNormal = document.getElementById('ssNormal');
 const ssCustom = document.getElementById('ssCustom');
@@ -566,7 +615,9 @@ ssSlider.addEventListener('input', () => {
 });
 setInterval(refreshSpeedSwitch, 200);
 
-// === HUD ОБНОВЛЕНИЕ ===
+// ============================================================
+//  HUD ОБНОВЛЕНИЕ
+// ============================================================
 setInterval(() => {
   const my = serverData.players[me];
   if (!my) return;
@@ -656,14 +707,15 @@ setInterval(() => {
   }
 }, 100);
 
-// === МОБИЛЬНОЕ УПРАВЛЕНИЕ ===
+// ============================================================
+//  МОБИЛЬНОЕ УПРАВЛЕНИЕ
+// ============================================================
 if (isTouchDevice) {
   const joy = document.getElementById('joystick');
   const knob = document.getElementById('joystickKnob');
   let joyActive = false;
   let joyId = null;
   let centerX = 0, centerY = 0;
-  let moveFwd = 0, moveSide = 0;
 
   function joyStart(e) {
     const t = e.changedTouches[0];
@@ -689,7 +741,7 @@ if (isTouchDevice) {
 
     const nx = kx / r;
     const ny = ky / r;
-    // Вверх (ny<0) = вперёд; вправо (nx>0) = вправо
+    // Вверх (ny<0) = вперёд
     keys.w = ny < -0.25;
     keys.s = ny > 0.25;
     keys.d = nx > 0.25;
@@ -759,14 +811,13 @@ if (isTouchDevice) {
       if (t.identifier !== camTouchId) continue;
       const dx = t.clientX - camLastX;
       const dy = t.clientY - camLastY;
-      const mx = invertCamX ? -dx : dx;
-      const my = invertCamY ? -dy : dy;
+      const mx = window.invertCamX ? -dx : dx;
+      const my = window.invertCamY ? -dy : dy;
       camYaw   -= mx * 0.006;
       camPitch -= my * 0.006;
       camPitch = Math.max(-0.35, Math.min(0.9, camPitch));
       camLastX = t.clientX;
       camLastY = t.clientY;
-      recomputeLocal();
     }
   }, { passive: true });
   document.addEventListener('touchend', (e) => {
@@ -813,7 +864,9 @@ if (isTouchDevice) {
   }, 100);
 }
 
-// === 3D СЦЕНА ===
+// ============================================================
+//  3D СЦЕНА
+// ============================================================
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -917,6 +970,7 @@ function makeMultiline(lines, w=512, h=384) {
   return spr;
 }
 
+// ТЕРРЕЙН
 let terrainGroup = null, lastTerrainKey = '';
 function makeGrassTex() {
   const cv = document.createElement('canvas'); cv.width = 128; cv.height = 128;
@@ -995,6 +1049,7 @@ function rebuildTerrain(pits) {
   scene.add(terrainGroup);
 }
 
+// ЗАБОРЫ
 const fenceMat = new THREE.MeshLambertMaterial({ color: 0x8b5a2b });
 function addFence(x1, z1, x2, z2) {
   const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
@@ -1024,6 +1079,7 @@ addFence(SAFE_X_MAX, LANE_HALF, 4000, LANE_HALF);
   scene.add(lbl);
 }
 
+// БАЗА
 const baseGroup = new THREE.Group(); scene.add(baseGroup);
 const WALL_H = 12, BASE_W = 32, BASE_D = 32, BASE_CX = 16;
 const wallMat = new THREE.MeshLambertMaterial({ color: 0xb9b9c8 });
@@ -1068,6 +1124,7 @@ baseSign.position.set(BASE_CX, WALL_H + 3.5, 0);
 baseSign.scale.set(14, 3.5, 1);
 baseGroup.add(baseSign);
 
+// ПЭДЫ
 const padGroup = new THREE.Group(); scene.add(padGroup);
 const padEmptyMat = new THREE.MeshBasicMaterial({ color: 0x6666aa, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
 const padSelectedMat = new THREE.MeshBasicMaterial({ color: 0xff2222, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
@@ -1083,6 +1140,7 @@ for (let i = 0; i < MAX_PADS; i++) {
   padMeshes.push(m);
 }
 
+// ВЕРИТИ
 const basePadMeshes = new Map(), basePadLabels = new Map();
 
 function makeSmileyVarity(color, scale, sparkle) {
@@ -1175,6 +1233,7 @@ function removePadVisual(idx) {
   if (l) { padGroup.remove(l); basePadLabels.delete(idx); }
 }
 
+// МАГАЗИН (NPC)
 const shopGroup = new THREE.Group();
 {
   const bodyMat = new THREE.MeshLambertMaterial({ color: 0x9b59b6 });
@@ -1199,12 +1258,14 @@ const shopGroup = new THREE.Group();
   scene.add(shopGroup);
 }
 
+// ГОЛОГРАММА ТОПА
 const topBoard = makeMultiline([{ text: '🏆 ТОП', size: 42, color: '#ffe066' }]);
 topBoard.position.set(35, 14, 30);
 topBoard.scale.set(14, 10, 1);
 scene.add(topBoard);
 let lastTopJson = '';
 
+// ПЕРСОНАЖ
 function makeHumanoid(shirtColor, isMe) {
   const g = new THREE.Group();
   const skinMat = new THREE.MeshLambertMaterial({ color: 0xf5cba7 });
@@ -1273,6 +1334,7 @@ function makeWallMesh(color, label, zWidth) {
   return g;
 }
 
+// СОСТОЯНИЯ
 const playerStates = new Map();
 const wallStates = new Map();
 const brainrotStates = new Map();
@@ -1348,6 +1410,7 @@ function updateFromServer() {
   }
 }
 
+// ГЛАВНЫЙ ЦИКЛ
 const camTarget = new THREE.Vector3(40, 10, 0);
 const camLook = new THREE.Vector3(60, 2.5, 0);
 
@@ -1360,8 +1423,14 @@ function frame() {
   for (const [id, st] of playerStates) {
     st.current.lerp(st.target, 0.55);
     st.mesh.position.copy(st.current);
-    const dx = st.data.last_dx || 1;
-    st.mesh.rotation.y = dx >= 0 ? 0 : Math.PI;
+
+    // Плавный поворот вокруг оси по facing
+    const targetRot = -(st.data.facing || 0);
+    let diff = targetRot - st.mesh.rotation.y;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    st.mesh.rotation.y += diff * 0.25;
+
     if (st.data.state === 'pit') {
       st.mesh.position.y = st.data.y;
       st.mesh.scale.set(1, 0.6, 1);
