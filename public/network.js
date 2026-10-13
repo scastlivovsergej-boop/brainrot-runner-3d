@@ -2,7 +2,7 @@
 //  ОБЩЕЕ СОСТОЯНИЕ (G)
 // ============================================================
 window.G = window.G || {};
-const G = window.G;
+export const G = window.G;
 
 G.me = null;
 G.serverData = { players:{}, walls:[], brainrots:[], pits:[], top:[], all_nicks:[] };
