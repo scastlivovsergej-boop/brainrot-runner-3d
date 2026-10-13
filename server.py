@@ -35,9 +35,6 @@ os.makedirs(DATA_DIR, exist_ok=True)
 SAVE_FILE = os.path.join(DATA_DIR, 'players.json')
 ADMIN_PASSWORD = 'SergGGHH'
 
-# ============================================================
-#  ОРУЖИЕ И БРОНЯ
-# ============================================================
 WEAPONS = [
     {'name': 'Кулак',    'emoji': '🥊', 'damage': 0,  'cost': 0},
     {'name': 'Бита',     'emoji': '🏏', 'damage': 2,  'cost': 50_000},
@@ -54,6 +51,8 @@ ARMORS = [
     {'name': 'Тяжёлая',   'emoji': '🛡️🛡️', 'hp': 20, 'cost': 2_500_000},
     {'name': 'Алмазная',  'emoji': '💎', 'hp': 40, 'cost': 15_000_000},
 ]
+
+SHIELD_COST = 1_000_000
 
 ATTACK_RADIUS = 5.0
 ATTACK_CD = 0.3
@@ -210,6 +209,7 @@ def persist_player(p):
         'cost_10': p.get('cost_10', COST_10_BASE),
         'weapon_tier': p.get('weapon_tier', 0),
         'armor_tier': p.get('armor_tier', 0),
+        'has_shield': p.get('has_shield', False),
     }
 
 
@@ -351,14 +351,14 @@ def new_player(sid, nick):
         'prestige': 0,
         'income_multiplier': 1.0,
         'wall_timer': 2.0,
-        # оружие/броня
         'weapon_tier': 0,
         'armor_tier': 0,
+        'has_shield': False,
+        'shield_active': False,
         'damage_accum': 0.0,
         'last_dmg_time': 0.0,
         'stun_until': 0.0,
         'invuln_until': 0.0,
-        'shield_active': False,
         'attack_cd': 0.0,
     }
 
@@ -402,6 +402,7 @@ def light_player(p):
         'cost_10': p.get('cost_10', COST_10_BASE),
         'weapon_tier': p.get('weapon_tier', 0),
         'armor_tier': p.get('armor_tier', 0),
+        'has_shield': bool(p.get('has_shield', False)),
         'hp_max': hp_max,
         'hp_cur': round(hp_cur, 1),
         'damage_accum': round(p.get('damage_accum', 0), 1),
@@ -459,7 +460,6 @@ def stun_player(t):
     t['stun_until'] = now + STUN_DURATION
     t['invuln_until'] = now + INVULN_AFTER_STUN
     t['damage_accum'] = 0
-    # дропаем всё
     for br in t['carrying']:
         br['x'] = t['x']
         br['z'] = t['z']
@@ -486,11 +486,9 @@ def step(dt):
             if p['jump_t'] < 0:
                 p['jump_t'] = 0
 
-        # сброс накопленного урона через 30 сек
         if p['damage_accum'] > 0 and now - p['last_dmg_time'] > DAMAGE_RESET_TIME:
             p['damage_accum'] = 0
 
-        # оглушение — не двигается
         is_stunned = now < p['stun_until']
         spd = player_speed(p) if not is_stunned else 0
         p['x'] = max(SAFE_X_MIN + 1, p['x'] + spd * p['dx'] * dt)
@@ -599,14 +597,13 @@ def step(dt):
         if not p['authenticated']:
             continue
         p['wall_timer'] -= dt
-        if p['wall_timer'] <= 0 and p['x'] > ROAD_START_X + 20:
+        if p['wall_timer'] <= 0:
             if len(state['walls']) < WALL_LIMIT:
                 spawn_wall_pack_near(p['x'])
-                p['wall_timer'] = 0.6 + random.random() * 0.6
+                p['wall_timer'] = 2.0 + random.random() * 2.0
             else:
-                p['wall_timer'] = 0.5
+                p['wall_timer'] = 0.8
 
-    # движение стен
     alive = []
     for w in state['walls']:
         w['x'] -= w['speed'] * dt
@@ -779,7 +776,6 @@ def on_attack(data):
         t = state['players'].get(target_id)
         if not t or not t['authenticated']:
             return
-        # в сейф-зоне нельзя
         if p['x'] < ROAD_START_X or t['x'] < ROAD_START_X:
             return
         dx = p['x'] - t['x']; dz = p['z'] - t['z']
@@ -866,6 +862,8 @@ def on_auth(data):
             p['cost_10'] = int(acc.get('cost_10', COST_10_BASE))
             p['weapon_tier'] = int(acc.get('weapon_tier', 0))
             p['armor_tier'] = int(acc.get('armor_tier', 0))
+            p['has_shield'] = bool(acc.get('has_shield', False))
+            p['shield_active'] = False
             p['pass_hash'] = h
             p['account'] = nick
             p['authenticated'] = True
@@ -943,6 +941,7 @@ def on_admin_get_player(data):
                     'prestige': tp.get('prestige', 0),
                     'weapon_tier': tp.get('weapon_tier', 0),
                     'armor_tier': tp.get('armor_tier', 0),
+                    'has_shield': tp.get('has_shield', False),
                 }}
         if nick in accounts:
             acc = accounts[nick]
@@ -956,6 +955,7 @@ def on_admin_get_player(data):
                 'prestige': acc.get('prestige', 0),
                 'weapon_tier': acc.get('weapon_tier', 0),
                 'armor_tier': acc.get('armor_tier', 0),
+                'has_shield': acc.get('has_shield', False),
             }}
         return {'ok': False, 'err': f'Игрок "{nick}" не найден'}
 
@@ -994,6 +994,7 @@ def on_admin_cmd(data):
                 'cost_10': int(acc.get('cost_10', COST_10_BASE)),
                 'weapon_tier': int(acc.get('weapon_tier', 0)),
                 'armor_tier': int(acc.get('armor_tier', 0)),
+                'has_shield': bool(acc.get('has_shield', False)),
                 'account': target_nick,
                 'is_admin': acc.get('is_admin', False),
                 'authenticated': False,
@@ -1035,6 +1036,13 @@ def on_admin_cmd(data):
                 target['armor_tier'] = val
                 persist_player(target); save_accounts()
                 resp = {'ok': True, 'text': f'{target_nick}: броня = {ARMORS[val]["name"]}'}
+            elif cmd == 'set_shield':
+                val = bool(int(data.get('value', 0)))
+                target['has_shield'] = val
+                if not val:
+                    target['shield_active'] = False
+                persist_player(target); save_accounts()
+                resp = {'ok': True, 'text': f'{target_nick}: щит = {"да" if val else "нет"}'}
             elif cmd == 'reset_player':
                 target['money'] = 0
                 target['speed_bonus'] = 0
@@ -1050,6 +1058,8 @@ def on_admin_cmd(data):
                 target['cost_10'] = COST_10_BASE
                 target['weapon_tier'] = 0
                 target['armor_tier'] = 0
+                target['has_shield'] = False
+                target['shield_active'] = False
                 persist_player(target); save_accounts()
                 resp = {'ok': True, 'text': f'{target_nick}: ВСЕ данные сброшены'}
             elif cmd == 'set_password':
@@ -1149,8 +1159,11 @@ def on_input(data):
             p['hold_e'] = bool(data['hold_e'])
         if 'hold_d' in data:
             p['hold_d'] = bool(data['hold_d'])
-        if 'shield' in data:
-            p['shield_active'] = bool(data['shield'])
+        if data.get('toggle_shield'):
+            if p.get('has_shield'):
+                p['shield_active'] = not p['shield_active']
+            else:
+                p['shield_active'] = False
         if 'speed_limit' in data:
             v = data['speed_limit']
             if v is None:
@@ -1210,6 +1223,25 @@ def on_buy_armor(data):
         p['damage_accum'] = 0
         persist_player(p); save_accounts()
         resp = {'ok': True, 'text': f'Надето: {ARMORS[tier]["name"]}'}
+        socketio.emit('toast', {'text': resp['text']}, to=sid)
+        return resp
+
+
+@socketio.on('buy_shield')
+def on_buy_shield(data=None):
+    sid = request.sid
+    with lock:
+        p = state['players'].get(sid)
+        if not p or not p['authenticated']:
+            return {'ok': False, 'err': 'Нет игрока'}
+        if p.get('has_shield'):
+            return {'ok': False, 'err': 'Уже куплено'}
+        if p['money'] < SHIELD_COST:
+            return {'ok': False, 'err': f'Нужно {SHIELD_COST} монет'}
+        p['money'] -= SHIELD_COST
+        p['has_shield'] = True
+        persist_player(p); save_accounts()
+        resp = {'ok': True, 'text': '🛡️ Щит куплен! V — вкл/выкл'}
         socketio.emit('toast', {'text': resp['text']}, to=sid)
         return resp
 
@@ -1313,6 +1345,8 @@ def on_do_prestige(data=None):
             p['cost_10'] = COST_10_BASE
             p['weapon_tier'] = 0
             p['armor_tier'] = 0
+            p['has_shield'] = False
+            p['shield_active'] = False
             p['damage_accum'] = 0
             reset_pits()
             persist_player(p)

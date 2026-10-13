@@ -20,10 +20,11 @@ window.admCmd = function(cmd) {
   else if (cmd === 'prestige') payload.value = parseInt(document.getElementById('admPrestige').value) || 0;
   else if (cmd === 'set_weapon') payload.value = parseInt(document.getElementById('admWeapon').value) || 0;
   else if (cmd === 'set_armor') payload.value = parseInt(document.getElementById('admArmor').value) || 0;
+  else if (cmd === 'set_shield') payload.value = parseInt(document.getElementById('admShield').value) || 0;
   else if (cmd === 'slots') payload.value = parseInt(document.getElementById('admSlots').value) || 10;
   else if (cmd === 'set_password') payload.value = document.getElementById('admPass').value.trim();
   else if (cmd === 'reset_player') {
-    if (!confirm('Точно СБРОСИТЬ ВСЕ данные игрока?\n\nДеньги, скорость, верити, цены, престиж, оружие, броня — всё обнулится!')) return;
+    if (!confirm('Точно СБРОСИТЬ ВСЕ данные игрока?\n\nДеньги, скорость, верити, цены, престиж, оружие, броня, щит — всё обнулится!')) return;
   }
   else if (cmd === 'pad') {
     payload.idx = parseInt(document.getElementById('admPad').value) || 0;
@@ -63,6 +64,7 @@ window.admLoad = function() {
       document.getElementById('admPrestige').value = d.prestige || 0;
       document.getElementById('admWeapon').value = d.weapon_tier || 0;
       document.getElementById('admArmor').value = d.armor_tier || 0;
+      document.getElementById('admShield').value = d.has_shield ? 1 : 0;
       showToast('Загружено: ' + d.nick);
     } else {
       showToast((resp && resp.err) || 'Не найден', true);
@@ -104,6 +106,7 @@ function openPrestigeModal() {
     `• деньги: ${fmt(my.money)}💰<br>` +
     `• верити на базе: ${padsUsed} шт.<br>` +
     `• оружие и броня: сбросятся<br>` +
+    `• щит: сбросится<br>` +
     `• цены в магазине сбросятся`;
 
   prestigeConfirmBtn.disabled = !can;
@@ -151,7 +154,7 @@ document.querySelectorAll('.sc-buy-speed').forEach(btn => {
 });
 
 // ============================================================
-//  ОТРИСОВКА КАРТОЧЕК ОРУЖИЯ / БРОНИ
+//  КАРТОЧКИ ОРУЖИЯ / БРОНИ / ЩИТА
 // ============================================================
 function renderWeapons() {
   const grid = document.getElementById('weaponsGrid');
@@ -221,7 +224,39 @@ function renderArmors() {
   });
 }
 
-// Клиентские данные weapons/armors приходят из init
+function renderShield() {
+  const box = document.getElementById('shieldBox');
+  if (!box) return;
+  const my = G.serverData.players[G.me];
+  if (!my) return;
+  const has = my.has_shield;
+  if (has) {
+    box.innerHTML = `<div class="shield-card owned">
+      <div class="wc-emoji">🛡️</div>
+      <div>
+        <div class="wc-name">Щит</div>
+        <div class="wc-stat">V — вкл/выкл (медленнее, но −90% урона)</div>
+      </div>
+    </div>`;
+  } else {
+    box.innerHTML = `<div class="shield-card">
+      <div class="wc-emoji">🛡️</div>
+      <div style="flex:1">
+        <div class="wc-name">Щит</div>
+        <div class="wc-stat">−90% урона, но −50% скорости</div>
+        <div class="wc-price">${fmt(1_000_000)}💰</div>
+      </div>
+      <button class="sc-btn wc-buy" id="buyShieldBtn">Купить</button>
+    </div>`;
+    const btn = document.getElementById('buyShieldBtn');
+    if (btn) btn.addEventListener('click', () => {
+      socket.emit('buy_shield', {}, (resp) => {
+        if (resp && !resp.ok) showToast(resp.err, true);
+      });
+    });
+  }
+}
+
 socket.on('init', (d) => {
   if (d.weapons) window.G.weapons = d.weapons;
   if (d.armors) window.G.armors = d.armors;
@@ -418,15 +453,22 @@ setInterval(() => {
     (my.prestige > 0
       ? `⭐ Престиж <b>${my.prestige}</b> · ×${(my.income_multiplier || 1).toFixed(1)}<br>`
       : '') +
-    `<span class="hint">WASD · SPACE · T — чат · ЛКМ — атака · ПКМ — щит</span>`;
+    `<span class="hint">WASD · SPACE · T — чат · ЛКМ — атака · V — щит</span>`;
   document.getElementById('speedChip').innerHTML =
     `⚡ ${my.speed_pct_active || my.speed_pct}% / ${my.speed_pct}%`;
 
-  // Чип оружия
+  // Чип оружия / щита
   const weapons = G.weapons || [];
   const wName = weapons[my.weapon_tier] ? weapons[my.weapon_tier].name : '—';
   const wEmoji = weapons[my.weapon_tier] ? weapons[my.weapon_tier].emoji : '⚔️';
-  document.getElementById('weaponChip').innerHTML = `${wEmoji} ${wName}`;
+  const chip = document.getElementById('weaponChip');
+  if (chip) {
+    if (my.shielded) {
+      chip.innerHTML = '🛡️ Щит активен';
+    } else {
+      chip.innerHTML = `${wEmoji} ${wName}`;
+    }
+  }
 
   const topList = G.serverData.top || [];
   document.getElementById('board').innerHTML =
@@ -481,7 +523,7 @@ setInterval(() => {
     }
   }
 
-  // Магазин — обновляем карточки и цены
+  // Магазин
   const shopModal = document.getElementById('shopModal');
   if (my.shop_open) {
     shopModal.classList.add('active');
@@ -496,6 +538,7 @@ setInterval(() => {
     });
     renderWeapons();
     renderArmors();
+    renderShield();
   } else {
     shopModal.classList.remove('active');
   }

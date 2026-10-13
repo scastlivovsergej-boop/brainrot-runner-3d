@@ -61,7 +61,6 @@
       <div class="shop-tab" data-tab="armors">🛡️ Броня</div>
     </div>
 
-    <!-- Вкладка Скорость -->
     <div class="shop-pane active" id="pane-speed">
       <div class="shop-hint">Сейчас: <b id="shopSpeedVal">100%</b></div>
       <div class="shop-grid">
@@ -83,15 +82,14 @@
       </div>
     </div>
 
-    <!-- Вкладка Оружие -->
     <div class="shop-pane" id="pane-weapons">
       <div class="shop-hint">Кулаком бить нельзя — купи оружие</div>
       <div class="shop-grid" id="weaponsGrid"></div>
     </div>
 
-    <!-- Вкладка Броня -->
     <div class="shop-pane" id="pane-armors">
-      <div class="shop-hint">Броня даёт HP. Зажми ЛКМ для щита (медленнее, но -90% урона)</div>
+      <div class="shop-hint">Броня даёт HP. Щит покупается отдельно, включается на V</div>
+      <div id="shieldBox"></div>
       <div class="shop-grid" id="armorsGrid"></div>
     </div>
 
@@ -153,8 +151,9 @@
     <div class="set-help">
       <b>WASD</b> — движение<br>
       <b>SPACE</b> — прыжок<br>
-      <b>ПКМ</b> — обзор (и щит если зажать)<br>
+      <b>ПКМ</b> — обзор<br>
       <b>ЛКМ по игроку</b> — атака<br>
+      <b>V</b> — вкл/выкл щит (если куплен)<br>
       <b>E</b> (зажать) — подобрать / магазин у NPC<br>
       <b>D</b> (зажать) — удалить верити<br>
       <b>T</b> — чат
@@ -216,6 +215,11 @@
         <label>Броня (0-4):</label>
         <input id="admArmor" type="number" value="0" min="0" max="4">
         <button onclick="admCmd('set_armor')">OK</button>
+      </div>
+      <div class="admin-row">
+        <label>Щит (0/1):</label>
+        <input id="admShield" type="number" value="0" min="0" max="1">
+        <button onclick="admCmd('set_shield')">OK</button>
       </div>
       <div class="admin-row">
         <label>Новый пароль:</label>
