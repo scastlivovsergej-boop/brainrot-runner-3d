@@ -1,8 +1,5 @@
 import * as THREE from 'three';
 
-// ============================================================
-//  УТИЛИТЫ
-// ============================================================
 function fmt(n) {
   const neg = n < 0; n = Math.abs(n);
   let s;
@@ -27,40 +24,36 @@ function padPos(i) {
   return { x: PAD_XS[c], z: PAD_Z_START + r * PAD_Z_STEP };
 }
 
-// ============================================================
-//  МОБИЛЬНОЕ ОПРЕДЕЛЕНИЕ
-// ============================================================
 const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 
-// ============================================================
-//  ПРОВЕРКА SOCKET.IO
-// ============================================================
 if (typeof io === 'undefined') {
   document.body.innerHTML = '<div style="padding:40px;font-size:20px;color:#fff;background:#c00">❌ socket.io не загрузился</div>';
   throw new Error('io not loaded');
 }
 
-// ============================================================
-//  СОКЕТ
-// ============================================================
 const socket = io({ transports: ['websocket', 'polling'] });
 window.socket = socket;
 
 let me = null;
-let serverData = { players:{}, walls:[], brainrots:[], pits:[], top:[] };
+let serverData = { players:{}, walls:[], brainrots:[], pits:[], top:[], all_nicks:[] };
 let chatShow = true, chatDur = 10, chatHead = true, isAdmin = false;
+
+// Настройки камеры
+let invertCamX = false, invertCamY = false;
+
 try {
   const s1 = localStorage.getItem('br_chatShow');
   const s2 = localStorage.getItem('br_chatDur');
   const s3 = localStorage.getItem('br_chatHead');
+  const s4 = localStorage.getItem('br_invX');
+  const s5 = localStorage.getItem('br_invY');
   if (s1 !== null) chatShow = s1 === 'true';
   if (s2 !== null) chatDur = parseInt(s2) || 10;
   if (s3 !== null) chatHead = s3 === 'true';
+  if (s4 !== null) invertCamX = s4 === 'true';
+  if (s5 !== null) invertCamY = s5 === 'true';
 } catch(e){}
 
-// ============================================================
-//  ТОСТЫ
-// ============================================================
 function showToast(text, isErr) {
   const wrap = document.getElementById('toasts');
   if (!wrap) return;
@@ -76,9 +69,6 @@ function showToast(text, isErr) {
 }
 window.showToast = showToast;
 
-// ============================================================
-//  СОКЕТ-ОБРАБОТЧИКИ
-// ============================================================
 socket.on('connect', () => showToast('✅ Подключено'));
 socket.on('connect_error', (e) => showToast('Ошибка соединения: ' + e.message, true));
 
@@ -89,6 +79,7 @@ socket.on('state', d => {
   serverData.brainrots = d.brainrots;
   serverData.pits = d.pits;
   serverData.top = d.top || [];
+  if (d.all_nicks) serverData.all_nicks = d.all_nicks;
 });
 
 socket.on('player:hit', d => {
@@ -137,9 +128,6 @@ socket.on('chat_msg', m => {
 });
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-// ============================================================
-//  ФУНКЦИИ
-// ============================================================
 window.upgradeBase = function() {
   socket.emit('upgrade_base', {}, (resp) => {});
 };
@@ -154,6 +142,7 @@ window.admCmd = function(cmd) {
   if (cmd === 'money') payload.value = parseFloat(document.getElementById('admMoney').value) || 0;
   else if (cmd === 'income_bonus') payload.value = parseFloat(document.getElementById('admInc').value) || 0;
   else if (cmd === 'speed') payload.value = parseInt(document.getElementById('admSpeed').value) || 0;
+  else if (cmd === 'prestige') payload.value = parseInt(document.getElementById('admPrestige').value) || 0;
   else if (cmd === 'slots') payload.value = parseInt(document.getElementById('admSlots').value) || 10;
   else if (cmd === 'set_password') payload.value = document.getElementById('admPass').value.trim();
   else if (cmd === 'reset_player') {
@@ -194,6 +183,7 @@ window.admLoad = function() {
       document.getElementById('admInc').value = d.income_bonus;
       document.getElementById('admSpeed').value = d.speed_bonus;
       document.getElementById('admSlots').value = d.base_slots || 10;
+      document.getElementById('admPrestige').value = d.prestige || 0;
       showToast('Загружено: ' + d.nick);
     } else {
       showToast((resp && resp.err) || 'Не найден', true);
@@ -203,12 +193,8 @@ window.admLoad = function() {
 
 window.closeSettings = function(){ document.getElementById('settingsModal').classList.remove('active'); };
 
-// ============================================================
-//  КНОПКИ
-// ============================================================
 document.getElementById('btnPad').addEventListener('click', window.upgradeBase);
 
-// ПРЕСТИЖ
 const prestigeModal = document.getElementById('prestigeModal');
 const prestigeInfo = document.getElementById('prestigeInfo');
 const prestigeConfirmBtn = document.getElementById('prestigeConfirmBtn');
@@ -269,9 +255,6 @@ document.querySelectorAll('.sc-btn').forEach(btn => {
   btn.addEventListener('click', () => buySpeed(parseInt(btn.dataset.kind)));
 });
 
-// ============================================================
-//  AUTH UI
-// ============================================================
 let authTab = 'login';
 document.querySelectorAll('.auth-tab').forEach(t => {
   t.addEventListener('click', () => {
@@ -327,6 +310,8 @@ document.getElementById('setChatOn').checked = chatShow;
 document.getElementById('setChatHead').checked = chatHead;
 document.getElementById('setDur').value = chatDur;
 document.getElementById('setDurVal').textContent = chatDur;
+document.getElementById('setInvX').checked = invertCamX;
+document.getElementById('setInvY').checked = invertCamY;
 document.getElementById('setChatOn').addEventListener('change', e => {
   chatShow = e.target.checked; if (!chatShow) chatLog.innerHTML = '';
   try { localStorage.setItem('br_chatShow', chatShow); } catch(_){}
@@ -340,10 +325,72 @@ document.getElementById('setChatHead').addEventListener('change', e => {
   chatHead = e.target.checked;
   try { localStorage.setItem('br_chatHead', chatHead); } catch(_){}
 });
+document.getElementById('setInvX').addEventListener('change', e => {
+  invertCamX = e.target.checked;
+  try { localStorage.setItem('br_invX', invertCamX); } catch(_){}
+});
+document.getElementById('setInvY').addEventListener('change', e => {
+  invertCamY = e.target.checked;
+  try { localStorage.setItem('br_invY', invertCamY); } catch(_){}
+});
 
-// ============================================================
-//  ВВОД
-// ============================================================
+// === АВТОДОПОЛНЕНИЕ НИКОВ В АДМИНКЕ ===
+const admNickInput = document.getElementById('admNick');
+const admNickDropdown = document.getElementById('admNickDropdown');
+let nickSelectedIdx = -1;
+
+function renderNickDropdown(filter) {
+  const all = serverData.all_nicks || [];
+  const f = (filter || '').toLowerCase();
+  const list = all.filter(n => n.toLowerCase().includes(f)).slice(0, 20);
+  if (!list.length) {
+    admNickDropdown.classList.remove('active');
+    return;
+  }
+  admNickDropdown.innerHTML = list.map(n =>
+    `<div class="nick-option" data-nick="${n}">${n}</div>`
+  ).join('');
+  admNickDropdown.querySelectorAll('.nick-option').forEach(el => {
+    el.addEventListener('mousedown', (ev) => {
+      ev.preventDefault();
+      admNickInput.value = el.dataset.nick;
+      admNickDropdown.classList.remove('active');
+    });
+  });
+  admNickDropdown.classList.add('active');
+  nickSelectedIdx = -1;
+}
+
+admNickInput.addEventListener('focus', () => renderNickDropdown(admNickInput.value));
+admNickInput.addEventListener('input', () => renderNickDropdown(admNickInput.value));
+admNickInput.addEventListener('blur', () => {
+  setTimeout(() => admNickDropdown.classList.remove('active'), 150);
+});
+admNickInput.addEventListener('keydown', (e) => {
+  const opts = admNickDropdown.querySelectorAll('.nick-option');
+  if (e.key === 'Tab' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (!admNickDropdown.classList.contains('active')) {
+      renderNickDropdown(admNickInput.value);
+    }
+    if (opts.length) {
+      nickSelectedIdx = (nickSelectedIdx + 1) % opts.length;
+      opts.forEach((el, i) => el.classList.toggle('selected', i === nickSelectedIdx));
+      admNickInput.value = opts[nickSelectedIdx].dataset.nick;
+    }
+  } else if (e.key === 'Enter') {
+    if (nickSelectedIdx >= 0 && opts[nickSelectedIdx]) {
+      admNickInput.value = opts[nickSelectedIdx].dataset.nick;
+      admNickDropdown.classList.remove('active');
+      nickSelectedIdx = -1;
+    }
+  } else if (e.key === 'Escape') {
+    admNickDropdown.classList.remove('active');
+    nickSelectedIdx = -1;
+  }
+});
+
+// === ВВОД ===
 const keys = { w:false, s:false, a:false, d:false, dx:0, dz:0 };
 let speedLimit = null;
 let holdE = false, holdD = false, prevHoldE = false;
@@ -368,10 +415,29 @@ if (canvas) {
   });
   document.addEventListener('mousemove', e => {
     if (!rmbDown || chatFocused) return;
-    camYaw -= e.movementX * 0.004;
-    camPitch -= e.movementY * 0.004;
+    const mx = invertCamX ? -e.movementX : e.movementX;
+    const my = invertCamY ? -e.movementY : e.movementY;
+    camYaw   -= mx * 0.004;
+    camPitch -= my * 0.004;
     camPitch = Math.max(-0.35, Math.min(0.9, camPitch));
+    recomputeLocal();
   });
+}
+
+function recomputeLocal() {
+  // Поворачиваем вектор движения по camYaw (W всегда идёт "вперёд" от камеры)
+  let fwd = 0, side = 0;
+  if (keys.w) fwd += 1;
+  if (keys.s) fwd -= 1;
+  if (keys.d) side += 1;
+  if (keys.a) side -= 1;
+  const cosY = Math.cos(camYaw), sinY = Math.sin(camYaw);
+  let dx = fwd * cosY - side * sinY;
+  let dz = fwd * sinY + side * cosY;
+  const len = Math.hypot(dx, dz);
+  if (len > 1) { dx /= len; dz /= len; }
+  keys.dx = dx;
+  keys.dz = dz;
 }
 
 function sendInput(extra) {
@@ -383,12 +449,7 @@ function sendInput(extra) {
   });
 }
 function recompute() {
-  let dx = 0, dz = 0;
-  if (keys.w) dx += 1;
-  if (keys.s) dx -= 1;
-  if (keys.a) dz -= 1;
-  if (keys.d) dz += 1;
-  keys.dx = dx; keys.dz = dz;
+  recomputeLocal();
   sendInput();
 }
 const K = e => e.key.toLowerCase();
@@ -432,7 +493,8 @@ function openChat() {
   const inp = document.getElementById('chatInput');
   inp.value = '';
   setTimeout(() => inp.focus(), 10);
-  keys.dx = 0; keys.dz = 0; sendInput();
+  keys.w = keys.a = keys.s = keys.d = false;
+  recompute();
 }
 function closeChat() {
   chatFocused = false;
@@ -448,9 +510,7 @@ document.getElementById('chatInput').addEventListener('keydown', e => {
   e.stopPropagation();
 });
 
-// ============================================================
-//  ПЕРЕКЛЮЧАТЕЛЬ СКОРОСТИ
-// ============================================================
+// === ПЕРЕКЛЮЧАТЕЛЬ СКОРОСТИ ===
 const ssWrap = document.getElementById('speedSwitch');
 const ssNormal = document.getElementById('ssNormal');
 const ssCustom = document.getElementById('ssCustom');
@@ -506,9 +566,7 @@ ssSlider.addEventListener('input', () => {
 });
 setInterval(refreshSpeedSwitch, 200);
 
-// ============================================================
-//  HUD ОБНОВЛЕНИЕ
-// ============================================================
+// === HUD ОБНОВЛЕНИЕ ===
 setInterval(() => {
   const my = serverData.players[me];
   if (!my) return;
@@ -560,7 +618,6 @@ setInterval(() => {
     }
   }
 
-  // Плашка E/D (только на ПК)
   if (!isTouchDevice) {
     const wrap = document.getElementById('actionWrap');
     const label = document.getElementById('actionLabel');
@@ -599,16 +656,14 @@ setInterval(() => {
   }
 }, 100);
 
-// ============================================================
-//  МОБИЛЬНОЕ УПРАВЛЕНИЕ
-// ============================================================
+// === МОБИЛЬНОЕ УПРАВЛЕНИЕ ===
 if (isTouchDevice) {
-  // ---------- ДЖОЙСТИК ----------
   const joy = document.getElementById('joystick');
   const knob = document.getElementById('joystickKnob');
   let joyActive = false;
   let joyId = null;
   let centerX = 0, centerY = 0;
+  let moveFwd = 0, moveSide = 0;
 
   function joyStart(e) {
     const t = e.changedTouches[0];
@@ -634,30 +689,31 @@ if (isTouchDevice) {
 
     const nx = kx / r;
     const ny = ky / r;
-    keys.dx = Math.abs(nx) > 0.3 ? (nx > 0 ? 1 : -1) : 0;
-    keys.dz = Math.abs(ny) > 0.3 ? (ny > 0 ? 1 : -1) : 0;
-    sendInput();
+    // Вверх (ny<0) = вперёд; вправо (nx>0) = вправо
+    keys.w = ny < -0.25;
+    keys.s = ny > 0.25;
+    keys.d = nx > 0.25;
+    keys.a = nx < -0.25;
+    recompute();
   }
   function joyEnd(e) {
     const t = Array.from(e.changedTouches).find(x => x.identifier === joyId);
     if (!t) return;
     joyActive = false; joyId = null;
     knob.style.transform = 'translate(-50%,-50%)';
-    keys.dx = 0; keys.dz = 0;
-    sendInput();
+    keys.w = keys.a = keys.s = keys.d = false;
+    recompute();
   }
   joy.addEventListener('touchstart', joyStart, { passive: true });
   joy.addEventListener('touchmove', joyMove, { passive: true });
   joy.addEventListener('touchend', joyEnd);
   joy.addEventListener('touchcancel', joyEnd);
 
-  // ---------- КНОПКА ПРЫЖКА ----------
   document.getElementById('mobJump').addEventListener('touchstart', (e) => {
     e.preventDefault();
     sendInput({ jump: true });
   });
 
-  // ---------- ВСПЛЫВАЮЩИЕ КНОПКИ ДЕЙСТВИЙ ----------
   const mobE = document.getElementById('mobActionE');
   const mobD = document.getElementById('mobActionD');
   const mobEIcon = document.getElementById('mobActionEIcon');
@@ -677,26 +733,13 @@ if (isTouchDevice) {
     holdE = true;
     sendInput();
   });
-  mobE.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    holdE = false;
-    sendInput();
-  });
+  mobE.addEventListener('touchend', (e) => { e.preventDefault(); holdE = false; sendInput(); });
   mobE.addEventListener('touchcancel', () => { holdE = false; sendInput(); });
 
-  mobD.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    holdD = true;
-    sendInput();
-  });
-  mobD.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    holdD = false;
-    sendInput();
-  });
+  mobD.addEventListener('touchstart', (e) => { e.preventDefault(); holdD = true; sendInput(); });
+  mobD.addEventListener('touchend', (e) => { e.preventDefault(); holdD = false; sendInput(); });
   mobD.addEventListener('touchcancel', () => { holdD = false; sendInput(); });
 
-  // ---------- КАМЕРА (свайп) ----------
   let camTouchId = null;
   let camLastX = 0, camLastY = 0;
   document.addEventListener('touchstart', (e) => {
@@ -716,11 +759,14 @@ if (isTouchDevice) {
       if (t.identifier !== camTouchId) continue;
       const dx = t.clientX - camLastX;
       const dy = t.clientY - camLastY;
-      camYaw -= dx * 0.006;
-      camPitch -= dy * 0.006;
+      const mx = invertCamX ? -dx : dx;
+      const my = invertCamY ? -dy : dy;
+      camYaw   -= mx * 0.006;
+      camPitch -= my * 0.006;
       camPitch = Math.max(-0.35, Math.min(0.9, camPitch));
       camLastX = t.clientX;
       camLastY = t.clientY;
+      recomputeLocal();
     }
   }, { passive: true });
   document.addEventListener('touchend', (e) => {
@@ -729,7 +775,6 @@ if (isTouchDevice) {
     }
   });
 
-  // ---------- ОБНОВЛЕНИЕ ВИДИМОСТИ КНОПОК ----------
   setInterval(() => {
     const my = serverData.players[me];
     if (!my) return;
@@ -768,9 +813,7 @@ if (isTouchDevice) {
   }, 100);
 }
 
-// ============================================================
-//  3D СЦЕНА
-// ============================================================
+// === 3D СЦЕНА ===
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -874,7 +917,6 @@ function makeMultiline(lines, w=512, h=384) {
   return spr;
 }
 
-// ТЕРРЕЙН
 let terrainGroup = null, lastTerrainKey = '';
 function makeGrassTex() {
   const cv = document.createElement('canvas'); cv.width = 128; cv.height = 128;
@@ -953,7 +995,6 @@ function rebuildTerrain(pits) {
   scene.add(terrainGroup);
 }
 
-// ЗАБОРЫ
 const fenceMat = new THREE.MeshLambertMaterial({ color: 0x8b5a2b });
 function addFence(x1, z1, x2, z2) {
   const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
@@ -983,7 +1024,6 @@ addFence(SAFE_X_MAX, LANE_HALF, 4000, LANE_HALF);
   scene.add(lbl);
 }
 
-// БАЗА
 const baseGroup = new THREE.Group(); scene.add(baseGroup);
 const WALL_H = 12, BASE_W = 32, BASE_D = 32, BASE_CX = 16;
 const wallMat = new THREE.MeshLambertMaterial({ color: 0xb9b9c8 });
@@ -1028,7 +1068,6 @@ baseSign.position.set(BASE_CX, WALL_H + 3.5, 0);
 baseSign.scale.set(14, 3.5, 1);
 baseGroup.add(baseSign);
 
-// ПЭДЫ
 const padGroup = new THREE.Group(); scene.add(padGroup);
 const padEmptyMat = new THREE.MeshBasicMaterial({ color: 0x6666aa, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
 const padSelectedMat = new THREE.MeshBasicMaterial({ color: 0xff2222, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
@@ -1044,7 +1083,6 @@ for (let i = 0; i < MAX_PADS; i++) {
   padMeshes.push(m);
 }
 
-// ВЕРИТИ
 const basePadMeshes = new Map(), basePadLabels = new Map();
 
 function makeSmileyVarity(color, scale, sparkle) {
@@ -1137,7 +1175,6 @@ function removePadVisual(idx) {
   if (l) { padGroup.remove(l); basePadLabels.delete(idx); }
 }
 
-// МАГАЗИН
 const shopGroup = new THREE.Group();
 {
   const bodyMat = new THREE.MeshLambertMaterial({ color: 0x9b59b6 });
@@ -1162,14 +1199,12 @@ const shopGroup = new THREE.Group();
   scene.add(shopGroup);
 }
 
-// ГОЛОГРАММА ТОПА
 const topBoard = makeMultiline([{ text: '🏆 ТОП', size: 42, color: '#ffe066' }]);
 topBoard.position.set(35, 14, 30);
 topBoard.scale.set(14, 10, 1);
 scene.add(topBoard);
 let lastTopJson = '';
 
-// ПЕРСОНАЖ
 function makeHumanoid(shirtColor, isMe) {
   const g = new THREE.Group();
   const skinMat = new THREE.MeshLambertMaterial({ color: 0xf5cba7 });
@@ -1238,7 +1273,6 @@ function makeWallMesh(color, label, zWidth) {
   return g;
 }
 
-// СОСТОЯНИЯ
 const playerStates = new Map();
 const wallStates = new Map();
 const brainrotStates = new Map();
@@ -1314,7 +1348,6 @@ function updateFromServer() {
   }
 }
 
-// ГЛАВНЫЙ ЦИКЛ
 const camTarget = new THREE.Vector3(40, 10, 0);
 const camLook = new THREE.Vector3(60, 2.5, 0);
 

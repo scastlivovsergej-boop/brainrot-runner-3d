@@ -10,7 +10,7 @@ from psycopg2.extras import Json
 from flask import Flask, request
 from flask_socketio import SocketIO
 
-DB_URL = 'postgresql://postgres:qJ4iu4Bqwb6AkaFc@db.butcgsmwqyviesojrclq.supabase.co:5432/postgres'
+DB_URL = 'postgresql://postgres.butcgsmwqyviesojrclq:qJ4iu4Bqwb6AkaFc@aws-0-eu-central-1.pooler.supabase.com:6543/postgres'
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'public'), static_url_path='')
@@ -30,7 +30,6 @@ def add_no_cache(response):
 
 TICK_RATE = 30
 DT = 1.0 / TICK_RATE
-# Файл как резервная копия, основное хранилище — PostgreSQL
 DATA_DIR = '/data'
 os.makedirs(DATA_DIR, exist_ok=True)
 SAVE_FILE = os.path.join(DATA_DIR, 'players.json')
@@ -81,6 +80,12 @@ PAD_Z_START = -14
 PAD_Z_STEP = 3.5
 PAD_RADIUS = 1.9
 
+# Параметры капа для каждого игрока
+PLAYER_BR_CAP = 4              # минимум верити в диапазоне у каждого игрока
+PLAYER_BR_RANGE = (30, 500)    # диапазон впереди игрока
+PLAYER_WALL_CAP = 2            # минимум стен в диапазоне
+PLAYER_WALL_RANGE = (0, 600)
+
 
 def pad_pos(idx):
     col = idx % PAD_COLS
@@ -113,7 +118,6 @@ def init_db():
 
 
 def load_accounts():
-    """Загружаем все аккаунты из PostgreSQL."""
     try:
         with db_conn() as conn:
             with conn.cursor() as cur:
@@ -126,7 +130,6 @@ def load_accounts():
         return result
     except Exception as e:
         print('[DB] load error:', e)
-        # Fallback — старый JSON, если БД недоступна
         if os.path.exists(SAVE_FILE):
             try:
                 with open(SAVE_FILE, 'r', encoding='utf-8') as f:
@@ -141,7 +144,6 @@ accounts = load_accounts()
 
 
 def save_accounts():
-    """Сохраняем все аккаунты в PostgreSQL (upsert)."""
     try:
         with db_conn() as conn:
             with conn.cursor() as cur:
@@ -153,7 +155,6 @@ def save_accounts():
             conn.commit()
     except Exception as e:
         print('[DB] save error:', e)
-        # Fallback — пишем в JSON, чтобы не потерять данные
         try:
             with open(SAVE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(accounts, f, ensure_ascii=False, indent=2)
@@ -187,6 +188,7 @@ state = {
     'players': {}, 'walls': [], 'brainrots': {}, 'pits': [],
     'next_wall_id': 1, 'next_br_id': 1,
     'wall_timer': 2.0,
+    'br_check_timer': 0.0,
 }
 lock = threading.Lock()
 
@@ -198,16 +200,12 @@ def max_player_x():
 
 
 def ensure_pits(up_to):
-    """Ямы генерируются от x=155 с промежутком, растущим от расстояния."""
     pits = state['pits']
     if not pits:
-        # Первая яма в 5м от старта дороги (x = 155)
         pits.append({'x': ROAD_START_X + 5, 'w': PIT_LEN})
     last = pits[-1]['x'] + pits[-1]['w']
     while last < up_to:
         dist = max(0.0, last - ROAD_START_X)
-        # Промежуток = 5 + 10% от расстояния + рандом 0..15
-        # 5м от старта: gap ≈ 5, 100м: gap ≈ 15, 500м: gap ≈ 55, 1000м: gap ≈ 105
         gap = 5 + dist * 0.1 + random.random() * 15
         last += gap
         pits.append({'x': last, 'w': PIT_LEN})
@@ -215,7 +213,6 @@ def ensure_pits(up_to):
 
 
 def reset_pits():
-    """Полностью пересоздать ямы с нуля."""
     state['pits'] = []
     ensure_pits(2000)
 
@@ -238,16 +235,16 @@ def in_pit(x, margin=0):
     return False
 
 
-def spawn_brainrot():
-    mpx = max_player_x()
-    for attempt in range(80):
-        x = mpx + 30 + random.random() * 250
+def spawn_brainrot_near(x_center):
+    """Спавн верити рядом с конкретным x (впереди)."""
+    for attempt in range(30):
+        x = x_center + PLAYER_BR_RANGE[0] + random.random() * (PLAYER_BR_RANGE[1] - PLAYER_BR_RANGE[0])
         if x < ROAD_START_X + 15:
             continue
         if in_pit(x, margin=2):
             continue
         z = (random.random() - 0.5) * (LANE_HALF * 2 - 8)
-        too_close = any(abs(br['x'] - x) < 15 for br in state['brainrots'].values())
+        too_close = any(abs(br['x'] - x) < 20 for br in state['brainrots'].values())
         if too_close:
             continue
         v = brainrot_value_at(x)
@@ -264,18 +261,7 @@ def spawn_brainrot():
         state['next_br_id'] += 1
         state['brainrots'][br['id']] = br
         return True
-    # fallback
-    x = mpx + 100
-    z = (random.random() - 0.5) * (LANE_HALF * 2 - 8)
-    v = brainrot_value_at(x)
-    br = {
-        'id': state['next_br_id'],
-        'x': x, 'z': z, 'value': v, 'income': brainrot_income(v),
-        'sparkle': False, 'expire_at': time.time() + BRAINROT_LIFE,
-    }
-    state['next_br_id'] += 1
-    state['brainrots'][br['id']] = br
-    return True
+    return False
 
 
 def player_speed(p):
@@ -303,7 +289,7 @@ def new_player(sid, nick):
         'x': 55.0, 'z': 0.0, 'y': 0.0,
         'state': 'ground',
         'jump_t': 0.0, 'jump_from_y': 0.0,
-        'dx': 0, 'dz': 0, 'last_dx': 1,
+        'dx': 0.0, 'dz': 0.0, 'last_dx': 1,
         'money': 0.0, 'carrying': [],
         'base_slots': BASE_START_SLOTS,
         'base_pads': [None] * BASE_MAX_SLOTS,
@@ -326,6 +312,7 @@ def new_player(sid, nick):
         'cost_10': COST_10_BASE,
         'prestige': 0,
         'income_multiplier': 1.0,
+        'wall_timer': 2.0,
     }
 
 
@@ -385,9 +372,10 @@ def knockback_player(p):
     socketio.emit('player:hit', {'id': p['id']})
 
 
-def spawn_wall_pack(base_x):
+def spawn_wall_pack_near(x_center):
     n = random.choices([1, 2, 3, 4], weights=[75, 20, 4, 1])[0]
     types = random.sample(WALL_TYPES, n)
+    base_x = x_center + 400
     for i, t in enumerate(types):
         w = {
             'id': state['next_wall_id'],
@@ -446,9 +434,9 @@ def step(dt):
             p['y'] = 0
 
         if p['dx'] != 0:
-            p['last_dx'] = p['dx']
+            p['last_dx'] = 1 if p['dx'] > 0 else -1
 
-        # --- МАГАЗИН ---
+        # магазин
         near_shop = (p['x'] - SHOP_X) ** 2 + (p['z'] - SHOP_Z) ** 2 < SHOP_RADIUS ** 2
         if not near_shop:
             p['shop_open'] = False
@@ -461,7 +449,7 @@ def step(dt):
         elif not p['shop_open']:
             p['shop_t'] = max(0.0, p['shop_t'] - dt * 2)
 
-        # --- ПОДБОР БРЕЙНРОТА ---
+        # подбор
         near_br_id = None
         best_d = 25
         for br_id, br in state['brainrots'].items():
@@ -491,7 +479,7 @@ def step(dt):
             if p['pick_t'] <= 0:
                 p['pick_target'] = None
 
-        # --- РАЗМЕЩЕНИЕ ---
+        # размещение
         if p['carrying'] and p['x'] < 32 and -16 < p['z'] < 16 and p['state'] == 'ground':
             idx = pad_at(p['x'], p['z'])
             if idx is not None and idx < p['base_slots'] and p['base_pads'][idx] is None:
@@ -510,7 +498,7 @@ def step(dt):
         else:
             p['place_t'] = max(0.0, p['place_t'] - dt * 3)
 
-        # --- УДАЛЕНИЕ ---
+        # удаление
         if p['x'] < 32 and -16 < p['z'] < 16 and p['state'] == 'ground':
             if p['destroy_idx'] >= 0 and p['destroy_idx'] < p['base_slots'] and p['base_pads'][p['destroy_idx']]:
                 if p['hold_d']:
@@ -529,20 +517,19 @@ def step(dt):
             p['destroy_idx'] = -1
             p['destroy_t'] = 0
 
-    # спавн стен
-    state['wall_timer'] -= dt
-    if state['wall_timer'] <= 0 and max_player_x() > ROAD_START_X + 30:
-        mpx = max_player_x()
-        if state['walls']:
-            front = max(w['x'] for w in state['walls'])
-            if front < mpx + 250:
-                spawn_wall_pack(mpx + 500)
-                state['wall_timer'] = 3.0 + random.random() * 3.0
+    # === Спавн стен для КАЖДОГО игрока ===
+    for p in state['players'].values():
+        if not p['authenticated']:
+            continue
+        p['wall_timer'] -= dt
+        if p['wall_timer'] <= 0 and p['x'] > ROAD_START_X + 30:
+            # есть ли стены в зоне впереди игрока?
+            front_walls = [w for w in state['walls'] if p['x'] < w['x'] < p['x'] + 600]
+            if not front_walls and len(state['walls']) < 15:
+                spawn_wall_pack_near(p['x'])
+                p['wall_timer'] = 4.0 + random.random() * 3.0
             else:
-                state['wall_timer'] = 0.5
-        else:
-            spawn_wall_pack(mpx + 500)
-            state['wall_timer'] = 3.0 + random.random() * 3.0
+                p['wall_timer'] = 1.0
 
     # движение стен
     alive = []
@@ -569,17 +556,27 @@ def step(dt):
         inc = total_income(p)
         p['money'] += inc * dt
 
-    # истечение брейнротов
+    # истечение верити
     for br_id in list(state['brainrots'].keys()):
         if state['brainrots'][br_id]['expire_at'] <= now:
             del state['brainrots'][br_id]
 
-    while len(state['brainrots']) < 10:
-        if not spawn_brainrot():
-            break
+    # === Спавн верити для каждого игрока ===
+    state['br_check_timer'] -= dt
+    if state['br_check_timer'] <= 0:
+        state['br_check_timer'] = 1.0
+        for p in state['players'].values():
+            if not p['authenticated'] or p['x'] < ROAD_START_X - 50:
+                continue
+            xlo = p['x'] + PLAYER_BR_RANGE[0]
+            xhi = p['x'] + PLAYER_BR_RANGE[1]
+            cnt = sum(1 for br in state['brainrots'].values() if xlo < br['x'] < xhi)
+            need = PLAYER_BR_CAP - cnt
+            for _ in range(need):
+                if not spawn_brainrot_near(p['x']):
+                    break
 
-    # ⬇️ НЕ УДАЛЯЕМ ЯМЫ, КОТОРЫЕ БЛИЗКО К СТАРТУ
-    # (иначе после престижа первые ямы окажутся далеко)
+    # обрезаем далёкие ямы
     mpx = max_player_x()
     state['pits'] = [pt for pt in state['pits']
                      if pt['x'] < ROAD_START_X + 3000
@@ -598,11 +595,19 @@ def step(dt):
         ],
         'pits': state['pits'][:80],
         'top': top,
+        'all_nicks': get_all_nicks(),
     })
 
 
+def get_all_nicks():
+    nicks = set(accounts.keys())
+    for p in state['players'].values():
+        if p['authenticated']:
+            nicks.add(p['name'])
+    return sorted(nicks)
+
+
 def get_top(n=5):
-    """Топ = онлайн игроки + сохранённые (но не в игре)"""
     online = {}
     for p in state['players'].values():
         if p['authenticated']:
@@ -629,6 +634,7 @@ def build_state_payload():
         ],
         'pits': state['pits'][:80],
         'top': get_top(),
+        'all_nicks': get_all_nicks(),
     }
 
 
@@ -674,6 +680,7 @@ def on_connect():
             'shop': {'x': SHOP_X, 'z': SHOP_Z},
             'pad_cols': PAD_COLS, 'pad_xs': PAD_XS,
             'pad_z_start': PAD_Z_START, 'pad_z_step': PAD_Z_STEP,
+            'all_nicks': get_all_nicks(),
         }, to=sid)
 
 
@@ -804,6 +811,7 @@ def on_admin_get_player(data):
                     'income_bonus': tp.get('income_bonus', 0),
                     'base_slots': tp['base_slots'],
                     'base_upgrade_cost': tp['base_upgrade_cost'],
+                    'prestige': tp.get('prestige', 0),
                 }}
         if nick in accounts:
             acc = accounts[nick]
@@ -814,6 +822,7 @@ def on_admin_get_player(data):
                 'income_bonus': acc.get('income_bonus', 0),
                 'base_slots': acc.get('base_slots', BASE_START_SLOTS),
                 'base_upgrade_cost': acc.get('base_upgrade_cost', BASE_UPGRADE_COST_BASE),
+                'prestige': acc.get('prestige', 0),
             }}
         return {'ok': False, 'err': f'Игрок "{nick}" не найден'}
 
@@ -875,6 +884,12 @@ def on_admin_cmd(data):
                 target['speed_bonus'] = val
                 persist_player(target); save_accounts()
                 resp = {'ok': True, 'text': f'{target_nick}: скорость = {100+val}%'}
+            elif cmd == 'prestige':
+                val = max(0, int(data.get('value', 0)))
+                target['prestige'] = val
+                target['income_multiplier'] = 1.0 + 0.5 * val
+                persist_player(target); save_accounts()
+                resp = {'ok': True, 'text': f'{target_nick}: престиж = {val} (×{target["income_multiplier"]})'}
             elif cmd == 'reset_player':
                 target['money'] = 0
                 target['speed_bonus'] = 0
@@ -974,9 +989,15 @@ def on_input(data):
         return
     with lock:
         if 'dx' in data:
-            p['dx'] = max(-1, min(1, int(data['dx'])))
+            try:
+                p['dx'] = max(-1.0, min(1.0, float(data['dx'])))
+            except Exception:
+                pass
         if 'dz' in data:
-            p['dz'] = max(-1, min(1, int(data['dz'])))
+            try:
+                p['dz'] = max(-1.0, min(1.0, float(data['dz'])))
+            except Exception:
+                pass
         if 'hold_e' in data:
             p['hold_e'] = bool(data['hold_e'])
         if 'hold_d' in data:
@@ -1094,10 +1115,7 @@ def on_do_prestige(data=None):
             p['cost_1'] = COST_1_BASE
             p['cost_5'] = COST_5_BASE
             p['cost_10'] = COST_10_BASE
-
-            # ⬇️ ВАЖНО: пересоздаём ямы с нуля, чтобы после престижа они были близко
             reset_pits()
-
             persist_player(p)
             save_accounts()
             resp = {'ok': True, 'text': f'⭐ Престиж {p["prestige"]}! Доход x{p["income_multiplier"]}'}
