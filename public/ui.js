@@ -48,6 +48,10 @@ window.adminSubmit = function() {
       document.getElementById('adminAuthBox').style.display = 'none';
       document.getElementById('adminPanel').style.display = 'block';
       loadAllNicks();
+      // Однократно подгружаем актуальные wall_settings в поля
+      setTimeout(() => {
+        if (G.serverData.wall_settings) applyWallSettings(G.serverData.wall_settings);
+      }, 300);
     } else {
       document.getElementById('adminErr').textContent = (resp && resp.err) || 'Неверно';
     }
@@ -495,9 +499,9 @@ setInterval(() => {
 
   const btnCasino = document.getElementById('btnCasino');
   if (btnCasino) {
-    const cost = (window.G && window.G.roulette_cost) || 10000;
-    btnCasino.disabled = my.money < cost || my.carry_n >= 1;
-    btnCasino.textContent = `🎰 Казино (${fmt(cost)}💰)`;
+    const minBet = (window.G && window.G.roulette_min_bet) || 100;
+    btnCasino.disabled = my.money < minBet;
+    btnCasino.textContent = `🎰 Казино`;
   }
 
   const btnPrestige = document.getElementById('btnPrestige');
@@ -692,7 +696,7 @@ function updatePvpButton(enabled) {
 socket.on('pvp_state', d => updatePvpButton(!!d.enabled));
 
 // ============================================================
-//  МОДЕРАЦИЯ (kick / ban / unban / delete)
+//  МОДЕРАЦИЯ
 // ============================================================
 function getAdmNick() {
   const el = document.getElementById('admNick');
@@ -736,15 +740,15 @@ window.admDelete = function() {
 };
 
 // ============================================================
-//  WALL SETTINGS (админ)
+//  WALL SETTINGS (админ) — НЕ перезаписываем из state
 // ============================================================
 window.admSetWalls = function() {
   const payload = {
     limit: parseInt(document.getElementById('admWallLimit').value) || 70,
-    interval_min: parseFloat(document.getElementById('admWallIntMin').value) || 2.0,
-    interval_range: parseFloat(document.getElementById('admWallIntRange').value) || 2.0,
+    interval_min: parseFloat(document.getElementById('admWallIntMin').value) || 5.0,
+    interval_range: parseFloat(document.getElementById('admWallIntRange').value) || 5.0,
     pack_max: parseInt(document.getElementById('admWallPackMax').value) || 5,
-    start_delay: parseFloat(document.getElementById('admWallStart').value) || 1.5,
+    start_delay: parseFloat(document.getElementById('admWallStart').value) || 5.0,
   };
   socket.emit('admin_set_walls', payload, (r) => {
     if (r && r.ok) showToast('⚙ Стены сохранены');
@@ -761,14 +765,13 @@ function applyWallSettings(ws) {
   if (el('admWallPackMax')) el('admWallPackMax').value = ws.pack_max;
   if (el('admWallStart')) el('admWallStart').value = ws.start_delay;
 }
+window.applyWallSettings = applyWallSettings;
 
 socket.on('wall_settings_update', applyWallSettings);
-socket.on('state', (d) => {
-  if (d.wall_settings) applyWallSettings(d.wall_settings);
-});
+// НЕ применяем из state — иначе стирает ввод пользователя в полях
 
 // ============================================================
-//  КАЗИНО
+//  КАЗИНО (×0/×1/×2/×3)
 // ============================================================
 const casinoModal = document.getElementById('casinoModal');
 const casinoReel = document.getElementById('casinoReel');
@@ -777,17 +780,26 @@ const casinoPrize = document.getElementById('casinoPrize');
 const casinoPrizeRarity = document.getElementById('casinoPrizeRarity');
 const casinoPrizeInfo = document.getElementById('casinoPrizeInfo');
 const casinoStatus = document.getElementById('casinoStatus');
+const casinoBet = document.getElementById('casinoBet');
+const casinoBetAll = document.getElementById('casinoBetAll');
 
 let casinoSpinning = false;
 
+function updateCasinoStatus() {
+  const my = G.serverData.players[G.me];
+  const money = my ? my.money : 0;
+  const minBet = (window.G && window.G.roulette_min_bet) || 100;
+  const maxBet = (window.G && window.G.roulette_max_bet) || 1000000;
+  casinoStatus.textContent = `💰 У тебя: ${fmt(money)} · Лимиты: ${fmt(minBet)}–${fmt(maxBet)}`;
+}
+
 function openCasino() {
   casinoModal.classList.add('active');
-  const my = G.serverData.players[G.me];
-  const cost = (window.G && window.G.roulette_cost) || 10000;
-  const money = my ? my.money : 0;
-  casinoStatus.textContent = `Взнос: ${fmt(cost)}💰 · У тебя: ${fmt(money)}💰`;
-  casinoSpinBtn.disabled = false;
   casinoPrize.style.display = 'none';
+  casinoReel.textContent = '❓';
+  casinoReel.style.color = '#fff';
+  casinoSpinBtn.disabled = false;
+  updateCasinoStatus();
 }
 
 document.getElementById('btnCasino').addEventListener('click', openCasino);
@@ -799,30 +811,37 @@ casinoModal.addEventListener('click', (e) => {
   if (e.target.id === 'casinoModal' && !casinoSpinning) casinoModal.classList.remove('active');
 });
 
+casinoBetAll.addEventListener('click', () => {
+  const my = G.serverData.players[G.me];
+  const maxBet = (window.G && window.G.roulette_max_bet) || 1000000;
+  if (!my) return;
+  casinoBet.value = Math.min(Math.floor(my.money), maxBet);
+});
+
 casinoSpinBtn.addEventListener('click', () => {
   if (casinoSpinning) return;
   const my = G.serverData.players[G.me];
-  const cost = (window.G && window.G.roulette_cost) || 10000;
-  if (!my || my.money < cost) {
-    showToast('Мало денег', true);
-    return;
-  }
-  if (my.carry_n >= 1) {
-    showToast('Руки заняты — убери верити', true);
-    return;
-  }
+  const minBet = (window.G && window.G.roulette_min_bet) || 100;
+  const maxBet = (window.G && window.G.roulette_max_bet) || 1000000;
+  const bet = Math.floor(parseInt(casinoBet.value) || 0);
+
+  if (!my) return;
+  if (bet < minBet) { showToast(`Минимум ${fmt(minBet)}💰`, true); return; }
+  if (bet > maxBet) { showToast(`Максимум ${fmt(maxBet)}💰`, true); return; }
+  if (my.money < bet) { showToast('Мало денег', true); return; }
 
   casinoSpinning = true;
   casinoSpinBtn.disabled = true;
   casinoPrize.style.display = 'none';
   casinoStatus.textContent = 'Крутим...';
 
-  const emojis = ['🍒','🍋','💎','🔔','⭐','🎰','7️⃣'];
+  const possible = ['×0', '×1', '×2', '×3'];
   const spinInterval = setInterval(() => {
-    casinoReel.textContent = emojis[Math.floor(Math.random() * emojis.length)];
-  }, 80);
+    casinoReel.textContent = possible[Math.floor(Math.random() * possible.length)];
+    casinoReel.style.color = '#fff';
+  }, 70);
 
-  socket.emit('spin_roulette', {}, (resp) => {
+  socket.emit('spin_roulette', { bet }, (resp) => {
     setTimeout(() => {
       clearInterval(spinInterval);
       casinoSpinning = false;
@@ -831,25 +850,30 @@ casinoSpinBtn.addEventListener('click', () => {
       if (!resp || !resp.ok) {
         casinoStatus.textContent = (resp && resp.err) || 'Ошибка';
         showToast((resp && resp.err) || 'Ошибка', true);
+        casinoReel.textContent = '❌';
         return;
       }
 
-      const emojiMap = {
-        common: '🥉', rare: '🥈', epic: '🥇', legendary: '👑'
-      };
-      casinoReel.textContent = emojiMap[resp.rarity] || '🎁';
+      casinoReel.textContent = resp.label;
+      casinoReel.style.color = resp.color || '#fff';
       casinoPrize.style.display = 'block';
-      casinoPrizeRarity.textContent = `${emojiMap[resp.rarity]} ${resp.rarity_name}`;
-      casinoPrizeRarity.style.color = resp.rarity_color || '#fff';
-      casinoPrizeInfo.textContent = `+${fmt(resp.income)}/сек (ценность ${fmt(resp.value)})`;
-      casinoStatus.textContent = '✅ Верити в руках! Отнеси на базу.';
-      showToast(`🎉 ${resp.rarity_name}! +${fmt(resp.income)}/сек`);
-    }, 2200);
+      casinoPrizeRarity.textContent = resp.label;
+      casinoPrizeRarity.style.color = resp.color || '#fff';
+      const delta = resp.delta;
+      const deltaStr = delta >= 0 ? `+${fmt(delta)}💰` : `${fmt(delta)}💰`;
+      casinoPrizeInfo.textContent = `Ставка: ${fmt(resp.bet)}💰 → Выплата: ${fmt(resp.win)}💰 (${deltaStr})`;
+
+      if (delta > 0) showToast(`🎉 Победа! ${deltaStr}`);
+      else if (delta === 0) showToast(`😐 Вернул ставку`);
+      else showToast(`💸 Проигрыш ${deltaStr}`, true);
+
+      updateCasinoStatus();
+    }, 2000);
   });
 });
 
 socket.on('roulette_result', (d) => {
-  // fallback
+  // fallback — ничего не делаем, всё в колбэке
 });
 
 // ============================================================

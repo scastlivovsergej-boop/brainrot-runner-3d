@@ -21,6 +21,8 @@ G.camPitch = 0.28;
 G.playerStates = new Map();
 G.wallStates = new Map();
 G.brainrotStates = new Map();
+G.roulette_min_bet = 100;
+G.roulette_max_bet = 1000000;
 
 // Загрузка настроек
 try {
@@ -75,7 +77,7 @@ window.showToast = showToast;
 if (typeof io === 'undefined') {
   document.body.insertAdjacentHTML('beforeend',
     '<div style="position:fixed;inset:0;padding:40px;font-size:20px;color:#fff;background:#c00;z-index:99999;font-family:monospace">' +
-    '❌ socket.io не загрузился<br><br>Проверь файл <b>/vendor/socket.io.min.js</b> — он должен существовать и быть не пустым.' +
+    '❌ socket.io не загрузился<br><br>Проверь файл <b>/socket.io.min.js</b> — он должен существовать и быть не пустым.' +
     '</div>');
   throw new Error('io not loaded');
 }
@@ -111,6 +113,9 @@ socket.on('init', d => {
   if (d.all_nicks) G.serverData.all_nicks = d.all_nicks;
   if (d.weapons) window.G.weapons = d.weapons;
   if (d.armors) window.G.armors = d.armors;
+  if (d.wall_settings) G.serverData.wall_settings = d.wall_settings;
+  if (d.roulette_min_bet !== undefined) window.G.roulette_min_bet = d.roulette_min_bet;
+  if (d.roulette_max_bet !== undefined) window.G.roulette_max_bet = d.roulette_max_bet;
 });
 
 socket.on('state', d => {
@@ -119,6 +124,7 @@ socket.on('state', d => {
   G.serverData.brainrots = d.brainrots;
   G.serverData.pits = d.pits;
   G.serverData.top = d.top || [];
+  if (d.wall_settings) G.serverData.wall_settings = d.wall_settings;
 });
 
 socket.on('auth_res', d => {

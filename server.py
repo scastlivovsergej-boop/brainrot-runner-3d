@@ -61,7 +61,15 @@ RARITIES = [
     {'key': 'legendary', 'name': 'Легендарный', 'weight': 2,  'mult': 15.0, 'sparkle': True,  'color': '#f39c12'},
 ]
 
-ROULETTE_COST = 10_000
+ROULETTE_OUTCOMES = [
+    {'mult': 0, 'weight': 45, 'label': '❌ ×0',  'color': '#e74c3c'},
+    {'mult': 1, 'weight': 30, 'label': '😐 ×1',  'color': '#95a5a6'},
+    {'mult': 2, 'weight': 17, 'label': '✨ ×2',  'color': '#3498db'},
+    {'mult': 3, 'weight': 8,  'label': '🔥 ×3',  'color': '#f39c12'},
+]
+
+ROULETTE_MIN_BET = 100
+ROULETTE_MAX_BET = 1_000_000
 
 ATTACK_RADIUS = 5.0
 ATTACK_CD = 0.3
@@ -121,11 +129,11 @@ PLAYER_BR_RANGE = (50, 1500)
 
 DEFAULT_WALL_SETTINGS = {
     'limit': 70,
-    'interval_min': 2.0,
-    'interval_range': 2.0,
+    'interval_min': 5.0,
+    'interval_range': 5.0,
     'pack_max': 5,
     'pack_weights': [40, 30, 15, 10, 5],
-    'start_delay': 1.5,
+    'start_delay': 5.0,
 }
 
 
@@ -296,6 +304,10 @@ def save_wall_settings():
 
 state['banned'] = load_banned()
 state['wall_settings'] = load_wall_settings()
+# Фикс: если в файле старые кривые настройки — сбрасываем на дефолтные
+if state['wall_settings'].get('interval_min', 0) < 3.0:
+    state['wall_settings'].update(DEFAULT_WALL_SETTINGS)
+    save_wall_settings()
 print(f"[WALLS] Loaded settings: {state['wall_settings']}")
 
 
@@ -432,7 +444,7 @@ def new_player(sid, nick):
         'cost_10': COST_10_BASE,
         'prestige': 0,
         'income_multiplier': 1.0,
-        'wall_timer': state['wall_settings'].get('start_delay', 1.5),
+        'wall_timer': state['wall_settings'].get('start_delay', 5.0),
         'weapon_tier': 0,
         'armor_tier': 0,
         'has_shield': False,
@@ -858,7 +870,8 @@ def on_connect():
             'weapons': WEAPONS,
             'armors': ARMORS,
             'rarities': RARITIES,
-            'roulette_cost': ROULETTE_COST,
+            'roulette_min_bet': ROULETTE_MIN_BET,
+            'roulette_max_bet': ROULETTE_MAX_BET,
             'pvp_enabled': state.get('pvp_enabled', True),
             'wall_settings': state['wall_settings'],
         }, to=sid)
@@ -999,7 +1012,7 @@ def on_auth(data):
 
 
 @socketio.on('force_open_shop')
-def on_force_open_shop():
+def on_force_open_shop(data=None):
     sid = request.sid
     with lock:
         p = state['players'].get(sid)
@@ -1067,7 +1080,7 @@ def on_admin_set_walls(data):
 
 
 @socketio.on('admin_list_nicks')
-def on_admin_list_nicks():
+def on_admin_list_nicks(data=None):
     sid = request.sid
     with lock:
         p = state['players'].get(sid)
@@ -1502,49 +1515,42 @@ def on_buy_shield(data=None):
 
 
 @socketio.on('spin_roulette')
-def on_spin_roulette(data=None):
+def on_spin_roulette(data):
     sid = request.sid
+    try:
+        bet = int((data or {}).get('bet', 0))
+    except Exception:
+        bet = 0
     with lock:
         p = state['players'].get(sid)
         if not p or not p['authenticated']:
             return {'ok': False, 'err': 'Нет игрока'}
+        if bet < ROULETTE_MIN_BET:
+            return {'ok': False, 'err': f'Минимум {ROULETTE_MIN_BET}💰'}
+        if bet > ROULETTE_MAX_BET:
+            return {'ok': False, 'err': f'Максимум {ROULETTE_MAX_BET}💰'}
+        if p['money'] < bet:
+            return {'ok': False, 'err': 'Мало денег'}
         if p['state'] != 'ground':
-            return {'ok': False, 'err': 'Нельзя крутить в яме'}
-        if p['money'] < ROULETTE_COST:
-            return {'ok': False, 'err': f'Нужно {ROULETTE_COST}💰'}
-        if len(p['carrying']) >= MAX_CARRY:
-            return {'ok': False, 'err': 'Руки заняты — сначала убери верити'}
+            return {'ok': False, 'err': 'Нельзя в яме'}
 
-        p['money'] -= ROULETTE_COST
+        p['money'] -= bet
 
-        keys = [r['weight'] for r in RARITIES]
-        rarity = random.choices(RARITIES, weights=keys)[0]
-
-        base_x = max(p['x'] + 20, ROAD_START_X + 100)
-        base_v = brainrot_value_at(base_x)
-        v = int(base_v * rarity['mult'])
-        br = {
-            'id': state['next_br_id'],
-            'x': p['x'], 'z': p['z'],
-            'value': v, 'income': brainrot_income(v),
-            'sparkle': rarity['sparkle'],
-            'rarity': rarity['key'],
-            'expire_at': time.time() + BRAINROT_LIFE,
-        }
-        state['next_br_id'] += 1
-        p['carrying'].append(br)
+        weights = [o['weight'] for o in ROULETTE_OUTCOMES]
+        outcome = random.choices(ROULETTE_OUTCOMES, weights=weights)[0]
+        win = bet * outcome['mult']
+        p['money'] += win
 
         persist_player(p)
 
         result = {
             'ok': True,
-            'rarity': rarity['key'],
-            'rarity_name': rarity['name'],
-            'rarity_color': rarity['color'],
-            'value': v,
-            'income': br['income'],
-            'sparkle': rarity['sparkle'],
-            'cost': ROULETTE_COST,
+            'bet': bet,
+            'mult': outcome['mult'],
+            'win': win,
+            'delta': win - bet,
+            'label': outcome['label'],
+            'color': outcome['color'],
         }
         socketio.emit('roulette_result', result, to=sid)
         return result

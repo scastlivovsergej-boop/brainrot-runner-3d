@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Brainrot Runner 3D</title>
-<link rel="stylesheet" href="style.css?v=123">
+<link rel="stylesheet" href="style.css?v=124">
 <script src="/socket.io.min.js"></script>
 <script type="importmap">
 { "imports": { "three": "/three.module.js" } }
@@ -115,15 +115,21 @@ window.addEventListener('unhandledrejection', e => {
   <div class="modal-inner" style="min-width:460px">
     <div class="modal-close" id="casinoClose">✕</div>
     <h2>🎰 Казино</h2>
-    <div class="casino-hint">Крути — получай случайного верити!</div>
+    <div class="casino-hint">Ставь деньги → крути → получай ×0 / ×1 / ×2 / ×3</div>
 
     <div id="casinoMachine">
-      <div id="casinoReel">🎰</div>
+      <div id="casinoReel">❓</div>
     </div>
 
     <div id="casinoPrize" style="display:none">
-      <div id="casinoPrizeRarity" style="font-size:22px;font-weight:900;margin-bottom:6px">—</div>
+      <div id="casinoPrizeRarity" style="font-size:24px;font-weight:900;margin-bottom:6px">—</div>
       <div id="casinoPrizeInfo" style="font-size:15px;opacity:0.9">—</div>
+    </div>
+
+    <div class="casino-bet-row">
+      <label>Ставка:</label>
+      <input id="casinoBet" type="number" value="1000" min="100" step="100">
+      <button id="casinoBetAll" class="casino-mini">MAX</button>
     </div>
 
     <div id="casinoStatus" style="font-size:14px;opacity:0.85;margin:14px 0">—</div>
@@ -131,7 +137,7 @@ window.addEventListener('unhandledrejection', e => {
     <button id="casinoSpinBtn" class="auth-submit" style="margin-top:10px;background:linear-gradient(180deg,#f1c40f,#d68910)!important;box-shadow:0 3px 0 #8a5a06!important;color:#000">🎲 КРУТИТЬ</button>
 
     <div class="casino-hint" style="margin-top:12px;font-size:12px;opacity:0.55">
-      Веса: 🥉 Обычный 70% · 🥈 Редкий 20% · 🥇 Эпический 8% · 👑 Легендарный 2%
+      Шансы: ❌ ×0 — 45% · 😐 ×1 — 30% · ✨ ×2 — 17% · 🔥 ×3 — 8%
     </div>
   </div>
 </div>
@@ -306,8 +312,8 @@ window.addEventListener('unhandledrejection', e => {
       </div>
       <div class="admin-row">
         <label>Интервал сек:</label>
-        <input id="admWallIntMin" type="number" step="0.5" value="2.0" min="0.3">
-        <input id="admWallIntRange" type="number" step="0.5" value="2.0" min="0">
+        <input id="admWallIntMin" type="number" step="0.5" value="5.0" min="0.3">
+        <input id="admWallIntRange" type="number" step="0.5" value="5.0" min="0">
       </div>
       <div class="admin-row">
         <label>Макс в пачке:</label>
@@ -315,7 +321,7 @@ window.addEventListener('unhandledrejection', e => {
       </div>
       <div class="admin-row">
         <label>Старт. задержка:</label>
-        <input id="admWallStart" type="number" step="0.5" value="1.5" min="0.5">
+        <input id="admWallStart" type="number" step="0.5" value="5.0" min="0.5">
       </div>
       <div class="admin-row">
         <label></label>
@@ -361,6 +367,6 @@ window.addEventListener('unhandledrejection', e => {
 <div id="flash"></div>
 <div id="hitMsg">💥 Отбросило!</div>
 
-<script type="module" src="game.js?v=123"></script>
+<script type="module" src="game.js?v=124"></script>
 </body>
 </html>

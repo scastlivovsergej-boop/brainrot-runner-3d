@@ -512,3 +512,36 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.1); margin:16px 0; }
   opacity: 0.45;
   cursor: not-allowed;
 }
+.casino-bet-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 14px 0 6px;
+}
+.casino-bet-row label {
+  font-size: 14px;
+  opacity: 0.85;
+  min-width: 60px;
+  text-align: left;
+}
+.casino-bet-row input {
+  flex: 1;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.08);
+  border: 1.5px solid rgba(255,255,255,0.2);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+}
+.casino-bet-row input:focus {
+  border-color: #f1c40f;
+}
+.casino-mini {
+  padding: 10px 14px !important;
+  font-size: 12px !important;
+  background: linear-gradient(180deg,#9b59b6,#7d3c98) !important;
+  box-shadow: 0 2px 0 #4a235a !important;
+  margin: 0 !important;
+}
