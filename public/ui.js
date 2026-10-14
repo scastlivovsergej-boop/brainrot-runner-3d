@@ -493,6 +493,13 @@ setInterval(() => {
     btnPad.textContent = full ? '🏁 50/50' : `🏠 +1 Пэд (${fmt(my.base_upgrade_cost)}💰)`;
   }
 
+  const btnCasino = document.getElementById('btnCasino');
+  if (btnCasino) {
+    const cost = (window.G && window.G.roulette_cost) || 10000;
+    btnCasino.disabled = my.money < cost || my.carry_n >= 1;
+    btnCasino.textContent = `🎰 Казино (${fmt(cost)}💰)`;
+  }
+
   const btnPrestige = document.getElementById('btnPrestige');
   if (btnPrestige) {
     btnPrestige.style.display = 'block';
@@ -530,7 +537,6 @@ setInterval(() => {
     }
   }
 
-  // Магазин
   const shopModal = document.getElementById('shopModal');
   if (my.shop_open) {
     shopModal.classList.add('active');
@@ -662,18 +668,7 @@ ssSlider.addEventListener('input', () => {
 setInterval(refreshSpeedSwitch, 200);
 
 // ============================================================
-//  ПОКАЗЫВАЕМ ОКНО АВТОРИЗАЦИИ ТОЛЬКО ЕСЛИ JS ДОЖИЛ ДО СЮДА
-//  (если что-то упало — будет чистый экран без блюра,
-//   и в F12 сразу будет видно причину)
-// ============================================================
-{
-  const authModal = document.getElementById('authModal');
-  if (authModal && !authModal.classList.contains('active')) {
-    authModal.classList.add('active');
-  }
-}
-// ============================================================
-//  PVP ПЕРЕКЛЮЧАТЕЛЬ (только админ)
+//  PVP ПЕРЕКЛЮЧАТЕЛЬ
 // ============================================================
 window.admTogglePvp = function() {
   socket.emit('admin_toggle_pvp', {}, (resp) => {
@@ -695,3 +690,174 @@ function updatePvpButton(enabled) {
 }
 
 socket.on('pvp_state', d => updatePvpButton(!!d.enabled));
+
+// ============================================================
+//  МОДЕРАЦИЯ (kick / ban / unban / delete)
+// ============================================================
+function getAdmNick() {
+  const el = document.getElementById('admNick');
+  return el ? el.value.trim() : '';
+}
+
+window.admKick = function() {
+  const nick = getAdmNick();
+  if (!nick) { showToast('Укажи ник', true); return; }
+  if (!confirm(`Кикнуть игрока "${nick}"? Аккаунт останется.`)) return;
+  socket.emit('admin_kick_player', { nick }, (r) => {
+    showToast((r && r.text) || (r && r.err) || 'Готово', !(r && r.ok));
+  });
+};
+
+window.admBan = function() {
+  const nick = getAdmNick();
+  if (!nick) { showToast('Укажи ник', true); return; }
+  if (!confirm(`🚫 Забанить "${nick}"?\n\nИгрок будет кикнут и не сможет войти.\nАккаунт и данные сохранятся.`)) return;
+  socket.emit('admin_ban_player', { nick, ban: true }, (r) => {
+    showToast((r && r.text) || (r && r.err) || 'Готово', !(r && r.ok));
+  });
+};
+
+window.admUnban = function() {
+  const nick = getAdmNick();
+  if (!nick) { showToast('Укажи ник', true); return; }
+  socket.emit('admin_ban_player', { nick, ban: false }, (r) => {
+    showToast((r && r.text) || (r && r.err) || 'Готово', !(r && r.ok));
+  });
+};
+
+window.admDelete = function() {
+  const nick = getAdmNick();
+  if (!nick) { showToast('Укажи ник', true); return; }
+  if (!confirm(`❌ УДАЛИТЬ "${nick}" навсегда?\n\n• Аккаунт\n• Деньги\n• Престиж\n• Все брейнроты\n• Из топов\n\nВосстановить нельзя!`)) return;
+  if (!confirm(`Последний раз спрашиваю. Точно удалить "${nick}"?`)) return;
+  socket.emit('admin_delete_player', { nick }, (r) => {
+    showToast((r && r.text) || (r && r.err) || 'Готово', !(r && r.ok));
+  });
+};
+
+// ============================================================
+//  WALL SETTINGS (админ)
+// ============================================================
+window.admSetWalls = function() {
+  const payload = {
+    limit: parseInt(document.getElementById('admWallLimit').value) || 70,
+    interval_min: parseFloat(document.getElementById('admWallIntMin').value) || 2.0,
+    interval_range: parseFloat(document.getElementById('admWallIntRange').value) || 2.0,
+    pack_max: parseInt(document.getElementById('admWallPackMax').value) || 5,
+    start_delay: parseFloat(document.getElementById('admWallStart').value) || 1.5,
+  };
+  socket.emit('admin_set_walls', payload, (r) => {
+    if (r && r.ok) showToast('⚙ Стены сохранены');
+    else showToast((r && r.err) || 'Ошибка', true);
+  });
+};
+
+function applyWallSettings(ws) {
+  if (!ws) return;
+  const el = (id) => document.getElementById(id);
+  if (el('admWallLimit')) el('admWallLimit').value = ws.limit;
+  if (el('admWallIntMin')) el('admWallIntMin').value = ws.interval_min;
+  if (el('admWallIntRange')) el('admWallIntRange').value = ws.interval_range;
+  if (el('admWallPackMax')) el('admWallPackMax').value = ws.pack_max;
+  if (el('admWallStart')) el('admWallStart').value = ws.start_delay;
+}
+
+socket.on('wall_settings_update', applyWallSettings);
+socket.on('state', (d) => {
+  if (d.wall_settings) applyWallSettings(d.wall_settings);
+});
+
+// ============================================================
+//  КАЗИНО
+// ============================================================
+const casinoModal = document.getElementById('casinoModal');
+const casinoReel = document.getElementById('casinoReel');
+const casinoSpinBtn = document.getElementById('casinoSpinBtn');
+const casinoPrize = document.getElementById('casinoPrize');
+const casinoPrizeRarity = document.getElementById('casinoPrizeRarity');
+const casinoPrizeInfo = document.getElementById('casinoPrizeInfo');
+const casinoStatus = document.getElementById('casinoStatus');
+
+let casinoSpinning = false;
+
+function openCasino() {
+  casinoModal.classList.add('active');
+  const my = G.serverData.players[G.me];
+  const cost = (window.G && window.G.roulette_cost) || 10000;
+  const money = my ? my.money : 0;
+  casinoStatus.textContent = `Взнос: ${fmt(cost)}💰 · У тебя: ${fmt(money)}💰`;
+  casinoSpinBtn.disabled = false;
+  casinoPrize.style.display = 'none';
+}
+
+document.getElementById('btnCasino').addEventListener('click', openCasino);
+document.getElementById('casinoClose').addEventListener('click', () => {
+  if (casinoSpinning) return;
+  casinoModal.classList.remove('active');
+});
+casinoModal.addEventListener('click', (e) => {
+  if (e.target.id === 'casinoModal' && !casinoSpinning) casinoModal.classList.remove('active');
+});
+
+casinoSpinBtn.addEventListener('click', () => {
+  if (casinoSpinning) return;
+  const my = G.serverData.players[G.me];
+  const cost = (window.G && window.G.roulette_cost) || 10000;
+  if (!my || my.money < cost) {
+    showToast('Мало денег', true);
+    return;
+  }
+  if (my.carry_n >= 1) {
+    showToast('Руки заняты — убери верити', true);
+    return;
+  }
+
+  casinoSpinning = true;
+  casinoSpinBtn.disabled = true;
+  casinoPrize.style.display = 'none';
+  casinoStatus.textContent = 'Крутим...';
+
+  const emojis = ['🍒','🍋','💎','🔔','⭐','🎰','7️⃣'];
+  const spinInterval = setInterval(() => {
+    casinoReel.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+  }, 80);
+
+  socket.emit('spin_roulette', {}, (resp) => {
+    setTimeout(() => {
+      clearInterval(spinInterval);
+      casinoSpinning = false;
+      casinoSpinBtn.disabled = false;
+
+      if (!resp || !resp.ok) {
+        casinoStatus.textContent = (resp && resp.err) || 'Ошибка';
+        showToast((resp && resp.err) || 'Ошибка', true);
+        return;
+      }
+
+      const emojiMap = {
+        common: '🥉', rare: '🥈', epic: '🥇', legendary: '👑'
+      };
+      casinoReel.textContent = emojiMap[resp.rarity] || '🎁';
+      casinoPrize.style.display = 'block';
+      casinoPrizeRarity.textContent = `${emojiMap[resp.rarity]} ${resp.rarity_name}`;
+      casinoPrizeRarity.style.color = resp.rarity_color || '#fff';
+      casinoPrizeInfo.textContent = `+${fmt(resp.income)}/сек (ценность ${fmt(resp.value)})`;
+      casinoStatus.textContent = '✅ Верити в руках! Отнеси на базу.';
+      showToast(`🎉 ${resp.rarity_name}! +${fmt(resp.income)}/сек`);
+    }, 2200);
+  });
+});
+
+socket.on('roulette_result', (d) => {
+  // fallback
+});
+
+// ============================================================
+//  ПОКАЗЫВАЕМ ОКНО АВТОРИЗАЦИИ ТОЛЬКО ЕСЛИ JS ДОЖИЛ
+// ============================================================
+{
+  const authModal = document.getElementById('authModal');
+  if (authModal && !authModal.classList.contains('active')) {
+    authModal.classList.add('active');
+  }
+}

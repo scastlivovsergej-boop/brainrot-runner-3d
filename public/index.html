@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Brainrot Runner 3D</title>
-<link rel="stylesheet" href="style.css?v=122">
+<link rel="stylesheet" href="style.css?v=123">
 <script src="/socket.io.min.js"></script>
 <script type="importmap">
 { "imports": { "three": "/three.module.js" } }
@@ -33,6 +33,7 @@ window.addEventListener('unhandledrejection', e => {
   <div id="weaponChip">⚔️ —</div>
   <div class="hud-buttons">
     <button id="btnPad">🏠 +1 Пэд</button>
+    <button id="btnCasino" style="background:linear-gradient(180deg,#f1c40f,#d68910);color:#000">🎰 Казино</button>
   </div>
   <button id="btnPrestige" style="display:none">⭐ Престиж</button>
   <div id="speedSwitch">
@@ -62,7 +63,7 @@ window.addEventListener('unhandledrejection', e => {
 
 <button id="settingsBtn" title="Настройки">⚙</button>
 
-<!-- МАГАЗИН — 3 вкладки -->
+<!-- МАГАЗИН -->
 <div id="shopModal" class="modal-back">
   <div class="shop-inner">
     <div class="modal-close" id="shopClose">✕</div>
@@ -106,6 +107,32 @@ window.addEventListener('unhandledrejection', e => {
     </div>
 
     <div class="shop-hint" style="opacity:0.5;font-size:12px;margin-top:14px">Клик вне окна или ✕ — закрыть</div>
+  </div>
+</div>
+
+<!-- КАЗИНО -->
+<div id="casinoModal" class="modal-back">
+  <div class="modal-inner" style="min-width:460px">
+    <div class="modal-close" id="casinoClose">✕</div>
+    <h2>🎰 Казино</h2>
+    <div class="casino-hint">Крути — получай случайного верити!</div>
+
+    <div id="casinoMachine">
+      <div id="casinoReel">🎰</div>
+    </div>
+
+    <div id="casinoPrize" style="display:none">
+      <div id="casinoPrizeRarity" style="font-size:22px;font-weight:900;margin-bottom:6px">—</div>
+      <div id="casinoPrizeInfo" style="font-size:15px;opacity:0.9">—</div>
+    </div>
+
+    <div id="casinoStatus" style="font-size:14px;opacity:0.85;margin:14px 0">—</div>
+
+    <button id="casinoSpinBtn" class="auth-submit" style="margin-top:10px;background:linear-gradient(180deg,#f1c40f,#d68910)!important;box-shadow:0 3px 0 #8a5a06!important;color:#000">🎲 КРУТИТЬ</button>
+
+    <div class="casino-hint" style="margin-top:12px;font-size:12px;opacity:0.55">
+      Веса: 🥉 Обычный 70% · 🥈 Редкий 20% · 🥇 Эпический 8% · 👑 Легендарный 2%
+    </div>
   </div>
 </div>
 
@@ -243,6 +270,13 @@ window.addEventListener('unhandledrejection', e => {
         <button id="admPvpToggle" onclick="admTogglePvp()" style="background:linear-gradient(180deg,#2ecc71,#27ae60)">✅ ВКЛ</button>
       </div>
       <div class="admin-row">
+        <label>Модерация:</label>
+        <button onclick="admKick()" style="background:linear-gradient(180deg,#f39c12,#d68910)">👢 КИК</button>
+        <button onclick="admBan()" style="background:linear-gradient(180deg,#e67e22,#ca6f1e)">🚫 БАН</button>
+        <button onclick="admUnban()" style="background:linear-gradient(180deg,#3498db,#2980b9)">✅ РАЗБАН</button>
+        <button onclick="admDelete()" style="background:linear-gradient(180deg,#e74c3c,#c0392b)">❌ УДАЛИТЬ</button>
+      </div>
+      <div class="admin-row">
         <label>Сброс игрока:</label>
         <button onclick="admCmd('reset_player')" style="background:linear-gradient(180deg,#e74c3c,#c0392b);box-shadow:0 2px 0 #922b21">🗑 СБРОСИТЬ ВСЁ</button>
       </div>
@@ -261,6 +295,31 @@ window.addEventListener('unhandledrejection', e => {
         <input id="admPadInc" type="number" value="20">
         <button onclick="admCmd('pad')">OK</button>
         <button onclick="admCmd('pad_clear')">🗑</button>
+      </div>
+
+      <div class="admin-row" style="border-top:1px solid rgba(255,255,255,0.15);padding-top:10px;margin-top:10px">
+        <label style="color:#ffe066">⚙ Стены (глобально):</label>
+      </div>
+      <div class="admin-row">
+        <label>Лимит:</label>
+        <input id="admWallLimit" type="number" value="70" min="5" max="500">
+      </div>
+      <div class="admin-row">
+        <label>Интервал сек:</label>
+        <input id="admWallIntMin" type="number" step="0.5" value="2.0" min="0.3">
+        <input id="admWallIntRange" type="number" step="0.5" value="2.0" min="0">
+      </div>
+      <div class="admin-row">
+        <label>Макс в пачке:</label>
+        <input id="admWallPackMax" type="number" value="5" min="1" max="10">
+      </div>
+      <div class="admin-row">
+        <label>Старт. задержка:</label>
+        <input id="admWallStart" type="number" step="0.5" value="1.5" min="0.5">
+      </div>
+      <div class="admin-row">
+        <label></label>
+        <button onclick="admSetWalls()" style="background:linear-gradient(180deg,#9b59b6,#7d3c98)">💾 Сохранить стены</button>
       </div>
     </div>
   </div>
@@ -302,6 +361,6 @@ window.addEventListener('unhandledrejection', e => {
 <div id="flash"></div>
 <div id="hitMsg">💥 Отбросило!</div>
 
-<script type="module" src="game.js?v=122"></script>
+<script type="module" src="game.js?v=123"></script>
 </body>
 </html>

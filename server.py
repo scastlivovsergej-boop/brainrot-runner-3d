@@ -54,6 +54,15 @@ ARMORS = [
 
 SHIELD_COST = 1_000_000
 
+RARITIES = [
+    {'key': 'common',    'name': 'Обычный',     'weight': 70, 'mult': 1.0,  'sparkle': False, 'color': '#a0a0a0'},
+    {'key': 'rare',      'name': 'Редкий',      'weight': 20, 'mult': 2.5,  'sparkle': False, 'color': '#3498db'},
+    {'key': 'epic',      'name': 'Эпический',   'weight': 8,  'mult': 5.0,  'sparkle': True,  'color': '#9b59b6'},
+    {'key': 'legendary', 'name': 'Легендарный', 'weight': 2,  'mult': 15.0, 'sparkle': True,  'color': '#f39c12'},
+]
+
+ROULETTE_COST = 10_000
+
 ATTACK_RADIUS = 5.0
 ATTACK_CD = 0.3
 STUN_DURATION = 2.0
@@ -110,7 +119,14 @@ PAD_RADIUS = 1.9
 PLAYER_BR_CAP = 40
 PLAYER_BR_RANGE = (50, 1500)
 
-WALL_LIMIT = 45
+DEFAULT_WALL_SETTINGS = {
+    'limit': 70,
+    'interval_min': 2.0,
+    'interval_range': 2.0,
+    'pack_max': 5,
+    'pack_weights': [40, 30, 15, 10, 5],
+    'start_delay': 1.5,
+}
 
 
 def pad_pos(idx):
@@ -197,6 +213,8 @@ def save_accounts():
 def persist_player(p):
     if not p.get('account'):
         return
+    if p.get('delete_pending'):
+        return
     accounts[p['account']] = {
         'pass_hash': p['pass_hash'],
         'nick': p['name'],
@@ -225,8 +243,60 @@ state = {
     'wall_timer': 2.0,
     'br_check_timer': 0.0,
     'pvp_enabled': True,
+    'banned': set(),
+    'wall_settings': dict(DEFAULT_WALL_SETTINGS),
 }
 lock = threading.Lock()
+
+
+BANNED_FILE = os.path.join(DATA_DIR, 'banned.json')
+
+
+def load_banned():
+    try:
+        if os.path.exists(BANNED_FILE):
+            with open(BANNED_FILE, 'r', encoding='utf-8') as f:
+                return set(json.load(f))
+    except Exception as e:
+        print('[BAN] load error:', e)
+    return set()
+
+
+def save_banned():
+    try:
+        with open(BANNED_FILE, 'w', encoding='utf-8') as f:
+            json.dump(sorted(state['banned']), f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print('[BAN] save error:', e)
+
+
+WALL_SETTINGS_FILE = os.path.join(DATA_DIR, 'wall_settings.json')
+
+
+def load_wall_settings():
+    try:
+        if os.path.exists(WALL_SETTINGS_FILE):
+            with open(WALL_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            merged = dict(DEFAULT_WALL_SETTINGS)
+            merged.update(data)
+            return merged
+    except Exception as e:
+        print('[WALLS] load error:', e)
+    return dict(DEFAULT_WALL_SETTINGS)
+
+
+def save_wall_settings():
+    try:
+        with open(WALL_SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(state['wall_settings'], f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print('[WALLS] save error:', e)
+
+
+state['banned'] = load_banned()
+state['wall_settings'] = load_wall_settings()
+print(f"[WALLS] Loaded settings: {state['wall_settings']}")
 
 
 def max_player_x():
@@ -271,7 +341,12 @@ def in_pit(x, margin=0):
     return False
 
 
-def spawn_brainrot_near(x_center):
+def roll_rarity():
+    keys = [r['weight'] for r in RARITIES]
+    return random.choices(RARITIES, weights=keys)[0]
+
+
+def spawn_brainrot_near(x_center, force_rarity=None):
     for attempt in range(30):
         x = x_center + PLAYER_BR_RANGE[0] + random.random() * (PLAYER_BR_RANGE[1] - PLAYER_BR_RANGE[0])
         if x < ROAD_START_X + 15:
@@ -282,15 +357,15 @@ def spawn_brainrot_near(x_center):
         too_close = any(abs(br['x'] - x) < 20 for br in state['brainrots'].values())
         if too_close:
             continue
-        v = brainrot_value_at(x)
-        is_sparkle = random.random() < 0.12
-        if is_sparkle:
-            v = int(v * 1.5)
+        base_v = brainrot_value_at(x)
+        rarity = force_rarity or roll_rarity()
+        v = int(base_v * rarity['mult'])
         br = {
             'id': state['next_br_id'],
             'x': x, 'z': z,
             'value': v, 'income': brainrot_income(v),
-            'sparkle': is_sparkle,
+            'sparkle': rarity['sparkle'],
+            'rarity': rarity['key'],
             'expire_at': time.time() + BRAINROT_LIFE,
         }
         state['next_br_id'] += 1
@@ -357,7 +432,7 @@ def new_player(sid, nick):
         'cost_10': COST_10_BASE,
         'prestige': 0,
         'income_multiplier': 1.0,
-        'wall_timer': 3.0,
+        'wall_timer': state['wall_settings'].get('start_delay', 1.5),
         'weapon_tier': 0,
         'armor_tier': 0,
         'has_shield': False,
@@ -382,6 +457,7 @@ def light_player(p):
             'value': br['value'],
             'income': br['income'],
             'sparkle': br.get('sparkle', False),
+            'rarity': br.get('rarity', 'common'),
         }
     return {
         'id': p['id'], 'name': p['name'],
@@ -447,9 +523,15 @@ def knockback_player(p):
     socketio.emit('player:hit', {'id': p['id']})
 
 
-def spawn_wall_pack_near(x_center):
-    n = random.choices([1, 2, 3, 4], weights=[65, 25, 8, 2])[0]
-    types = random.sample(WALL_TYPES, n)
+def spawn_wall_pack_near(x_center, ws=None):
+    if ws is None:
+        ws = state['wall_settings']
+    max_pack = max(1, int(ws['pack_max']))
+    weights = list(ws['pack_weights'])[:max_pack]
+    while len(weights) < max_pack:
+        weights.append(1)
+    n = random.choices(range(1, max_pack + 1), weights=weights)[0]
+    types = random.sample(WALL_TYPES, min(n, len(WALL_TYPES)))
     base_x = x_center + 400
     for i, t in enumerate(types):
         w = {
@@ -581,7 +663,8 @@ def step(dt):
                     p['base_pads'][idx] = {
                         'value': br['value'],
                         'income': br['income'],
-                        'sparkle': br.get('sparkle', False)
+                        'sparkle': br.get('sparkle', False),
+                        'rarity': br.get('rarity', 'common'),
                     }
                     p['place_t'] = 0
                     persist_player(p)
@@ -608,14 +691,15 @@ def step(dt):
             p['destroy_idx'] = -1
             p['destroy_t'] = 0
 
+    ws = state['wall_settings']
     for p in state['players'].values():
         if not p['authenticated']:
             continue
         p['wall_timer'] -= dt
         if p['wall_timer'] <= 0:
-            if len(state['walls']) < WALL_LIMIT:
-                spawn_wall_pack_near(p['x'])
-                p['wall_timer'] = 4.0 + random.random() * 4.0
+            if len(state['walls']) < ws['limit']:
+                spawn_wall_pack_near(p['x'], ws)
+                p['wall_timer'] = ws['interval_min'] + random.random() * ws['interval_range']
             else:
                 p['wall_timer'] = 0.8
 
@@ -675,12 +759,14 @@ def step(dt):
         'brainrots': [
             {'id': b['id'], 'x': round(b['x'], 2), 'z': round(b['z'], 2),
              'value': b['value'], 'income': b['income'], 'sparkle': b.get('sparkle', False),
+             'rarity': b.get('rarity', 'common'),
              'remaining': max(0, round(b['expire_at'] - now, 1))}
             for b in state['brainrots'].values()
         ],
         'pits': state['pits'][:80],
         'top': top,
         'pvp_enabled': state.get('pvp_enabled', True),
+        'wall_settings': state['wall_settings'],
     })
 
 
@@ -708,18 +794,21 @@ def get_top(n=5):
 
 
 def build_state_payload():
+    now = time.time()
     return {
         'players': {sid: light_player(p) for sid, p in state['players'].items() if p['authenticated']},
         'walls': state['walls'],
         'brainrots': [
             {'id': b['id'], 'x': round(b['x'], 2), 'z': round(b['z'], 2),
              'value': b['value'], 'income': b['income'], 'sparkle': b.get('sparkle', False),
-             'remaining': max(0, round(b['expire_at'] - time.time(), 1))}
+             'rarity': b.get('rarity', 'common'),
+             'remaining': max(0, round(b['expire_at'] - now, 1))}
             for b in state['brainrots'].values()
         ],
         'pits': state['pits'][:80],
         'top': get_top(),
         'pvp_enabled': state.get('pvp_enabled', True),
+        'wall_settings': state['wall_settings'],
     }
 
 
@@ -758,6 +847,7 @@ def on_connect():
             'brainrots': [
                 {'id': b['id'], 'x': b['x'], 'z': b['z'], 'value': b['value'],
                  'income': b['income'], 'sparkle': b.get('sparkle', False),
+                 'rarity': b.get('rarity', 'common'),
                  'remaining': max(0, round(b['expire_at'] - time.time(), 1))}
                 for b in state['brainrots'].values()
             ],
@@ -767,7 +857,10 @@ def on_connect():
             'pad_z_start': PAD_Z_START, 'pad_z_step': PAD_Z_STEP,
             'weapons': WEAPONS,
             'armors': ARMORS,
+            'rarities': RARITIES,
+            'roulette_cost': ROULETTE_COST,
             'pvp_enabled': state.get('pvp_enabled', True),
+            'wall_settings': state['wall_settings'],
         }, to=sid)
 
 
@@ -835,6 +928,10 @@ def on_auth(data):
     is_new = bool(data.get('is_new', False))
     if not nick or not pwd:
         socketio.emit('auth_res', {'ok': False, 'err': 'Заполни все поля'}, to=sid)
+        return
+
+    if nick in state['banned']:
+        socketio.emit('auth_res', {'ok': False, 'err': '🚫 Ник забанен'}, to=sid)
         return
 
     with lock:
@@ -948,6 +1045,27 @@ def on_admin_toggle_pvp(data=None):
         return {'ok': True, 'enabled': enabled}
 
 
+@socketio.on('admin_set_walls')
+def on_admin_set_walls(data):
+    sid = request.sid
+    with lock:
+        p = state['players'].get(sid)
+        if not p or not p.get('is_admin'):
+            return {'ok': False, 'err': 'Нет доступа'}
+        try:
+            ws = state['wall_settings']
+            if 'limit' in data: ws['limit'] = max(5, min(500, int(data['limit'])))
+            if 'interval_min' in data: ws['interval_min'] = max(0.3, min(30.0, float(data['interval_min'])))
+            if 'interval_range' in data: ws['interval_range'] = max(0.0, min(30.0, float(data['interval_range'])))
+            if 'pack_max' in data: ws['pack_max'] = max(1, min(10, int(data['pack_max'])))
+            if 'start_delay' in data: ws['start_delay'] = max(0.5, min(30.0, float(data['start_delay'])))
+            save_wall_settings()
+            socketio.emit('wall_settings_update', ws)
+            return {'ok': True, 'wall_settings': ws}
+        except Exception as e:
+            return {'ok': False, 'err': f'Ошибка: {e}'}
+
+
 @socketio.on('admin_list_nicks')
 def on_admin_list_nicks():
     sid = request.sid
@@ -956,6 +1074,103 @@ def on_admin_list_nicks():
         if not p or not p.get('is_admin'):
             return {'ok': False, 'nicks': []}
         return {'ok': True, 'nicks': get_all_nicks()}
+
+
+def _find_online_sid_by_nick(nick):
+    for tp_sid, tp in state['players'].items():
+        if tp.get('authenticated') and tp['name'] == nick:
+            return tp_sid
+    return None
+
+
+def _force_disconnect(sid):
+    try:
+        socketio.server.disconnect(sid, namespace='/')
+    except Exception as e:
+        print('[MOD] disconnect error:', e)
+
+
+@socketio.on('admin_kick_player')
+def on_admin_kick(data):
+    sid = request.sid
+    with lock:
+        p = state['players'].get(sid)
+        if not p or not p.get('is_admin'):
+            return {'ok': False, 'err': 'Нет доступа'}
+        nick = str(data.get('nick', '')).strip()
+        if not nick:
+            return {'ok': False, 'err': 'Ник не указан'}
+        target_sid = _find_online_sid_by_nick(nick)
+        if not target_sid:
+            return {'ok': False, 'err': f'Игрок "{nick}" не в сети'}
+        _force_disconnect(target_sid)
+        text = f'👢 {nick} кикнут'
+        socketio.emit('toast', {'text': text}, to=sid)
+        return {'ok': True, 'text': text}
+
+
+@socketio.on('admin_ban_player')
+def on_admin_ban(data):
+    sid = request.sid
+    with lock:
+        p = state['players'].get(sid)
+        if not p or not p.get('is_admin'):
+            return {'ok': False, 'err': 'Нет доступа'}
+        nick = str(data.get('nick', '')).strip()
+        if not nick:
+            return {'ok': False, 'err': 'Ник не указан'}
+        ban = bool(data.get('ban', True))
+        if ban:
+            state['banned'].add(nick)
+        else:
+            state['banned'].discard(nick)
+        save_banned()
+        if ban:
+            target_sid = _find_online_sid_by_nick(nick)
+            if target_sid:
+                _force_disconnect(target_sid)
+        text = f'{"🚫 " + nick + " забанен" if ban else "✅ " + nick + " разбанен"}'
+        socketio.emit('toast', {'text': text}, to=sid)
+        return {'ok': True, 'text': text, 'banned': ban}
+
+
+@socketio.on('admin_delete_player')
+def on_admin_delete(data):
+    sid = request.sid
+    with lock:
+        p = state['players'].get(sid)
+        if not p or not p.get('is_admin'):
+            return {'ok': False, 'err': 'Нет доступа'}
+        nick = str(data.get('nick', '')).strip()
+        if not nick:
+            return {'ok': False, 'err': 'Ник не указан'}
+        if nick == p['name']:
+            return {'ok': False, 'err': 'Нельзя удалить самого себя'}
+
+        target_sid = _find_online_sid_by_nick(nick)
+        if target_sid:
+            tp = state['players'].get(target_sid)
+            if tp:
+                tp['delete_pending'] = True
+                tp['account'] = None
+
+        existed = nick in accounts
+        accounts.pop(nick, None)
+
+        try:
+            with db_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute('DELETE FROM accounts WHERE nick = %s', (nick,))
+                conn.commit()
+        except Exception as e:
+            print('[DB] delete error:', e)
+
+        if target_sid:
+            _force_disconnect(target_sid)
+
+        text = f'❌ {nick} удалён' if existed else f'❌ {nick} не найден в БД'
+        socketio.emit('toast', {'text': text}, to=sid)
+        return {'ok': True, 'text': text}
 
 
 @socketio.on('admin_get_player')
@@ -1125,7 +1340,7 @@ def on_admin_cmd(data):
                         persist_player(target); save_accounts()
                         resp = {'ok': True, 'text': f'Пэд #{idx} очищен'}
                     else:
-                        target['base_pads'][idx] = {'value': val, 'income': inc, 'sparkle': False}
+                        target['base_pads'][idx] = {'value': val, 'income': inc, 'sparkle': False, 'rarity': 'common'}
                         persist_player(target); save_accounts()
                         resp = {'ok': True, 'text': f'{target_nick}: пэд #{idx} = {val} / +{inc}/сек'}
                 else:
@@ -1170,9 +1385,12 @@ def on_chat(data):
 def on_disconnect():
     with lock:
         p = state['players'].pop(request.sid, None)
-        if p:
-            persist_player(p)
-            save_accounts()
+        if not p:
+            return
+        if p.get('delete_pending'):
+            return
+        persist_player(p)
+        save_accounts()
 
 
 @socketio.on('input')
@@ -1281,6 +1499,55 @@ def on_buy_shield(data=None):
         resp = {'ok': True, 'text': '🛡️ Щит куплен! V — вкл/выкл'}
         socketio.emit('toast', {'text': resp['text']}, to=sid)
         return resp
+
+
+@socketio.on('spin_roulette')
+def on_spin_roulette(data=None):
+    sid = request.sid
+    with lock:
+        p = state['players'].get(sid)
+        if not p or not p['authenticated']:
+            return {'ok': False, 'err': 'Нет игрока'}
+        if p['state'] != 'ground':
+            return {'ok': False, 'err': 'Нельзя крутить в яме'}
+        if p['money'] < ROULETTE_COST:
+            return {'ok': False, 'err': f'Нужно {ROULETTE_COST}💰'}
+        if len(p['carrying']) >= MAX_CARRY:
+            return {'ok': False, 'err': 'Руки заняты — сначала убери верити'}
+
+        p['money'] -= ROULETTE_COST
+
+        keys = [r['weight'] for r in RARITIES]
+        rarity = random.choices(RARITIES, weights=keys)[0]
+
+        base_x = max(p['x'] + 20, ROAD_START_X + 100)
+        base_v = brainrot_value_at(base_x)
+        v = int(base_v * rarity['mult'])
+        br = {
+            'id': state['next_br_id'],
+            'x': p['x'], 'z': p['z'],
+            'value': v, 'income': brainrot_income(v),
+            'sparkle': rarity['sparkle'],
+            'rarity': rarity['key'],
+            'expire_at': time.time() + BRAINROT_LIFE,
+        }
+        state['next_br_id'] += 1
+        p['carrying'].append(br)
+
+        persist_player(p)
+
+        result = {
+            'ok': True,
+            'rarity': rarity['key'],
+            'rarity_name': rarity['name'],
+            'rarity_color': rarity['color'],
+            'value': v,
+            'income': br['income'],
+            'sparkle': rarity['sparkle'],
+            'cost': ROULETTE_COST,
+        }
+        socketio.emit('roulette_result', result, to=sid)
+        return result
 
 
 @socketio.on('select_destroy')
