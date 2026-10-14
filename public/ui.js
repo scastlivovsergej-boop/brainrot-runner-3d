@@ -672,3 +672,26 @@ setInterval(refreshSpeedSwitch, 200);
     authModal.classList.add('active');
   }
 }
+// ============================================================
+//  PVP ПЕРЕКЛЮЧАТЕЛЬ (только админ)
+// ============================================================
+window.admTogglePvp = function() {
+  socket.emit('admin_toggle_pvp', {}, (resp) => {
+    if (resp && resp.ok) updatePvpButton(resp.enabled);
+    else if (resp && resp.err && window.showToast) showToast(resp.err, true);
+  });
+};
+
+function updatePvpButton(enabled) {
+  const btn = document.getElementById('admPvpToggle');
+  if (!btn) return;
+  if (enabled) {
+    btn.textContent = '✅ ВКЛ';
+    btn.style.background = 'linear-gradient(180deg,#2ecc71,#27ae60)';
+  } else {
+    btn.textContent = '❌ ВЫКЛ';
+    btn.style.background = 'linear-gradient(180deg,#e74c3c,#c0392b)';
+  }
+}
+
+socket.on('pvp_state', d => updatePvpButton(!!d.enabled));

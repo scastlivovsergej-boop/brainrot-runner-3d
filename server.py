@@ -110,7 +110,7 @@ PAD_RADIUS = 1.9
 PLAYER_BR_CAP = 40
 PLAYER_BR_RANGE = (50, 1500)
 
-WALL_LIMIT = 60
+WALL_LIMIT = 45
 
 
 def pad_pos(idx):
@@ -168,8 +168,11 @@ def load_accounts():
 init_db()
 accounts = load_accounts()
 
+_last_save_err_log = 0
+
 
 def save_accounts():
+    global _last_save_err_log
     try:
         with db_conn() as conn:
             with conn.cursor() as cur:
@@ -179,8 +182,11 @@ def save_accounts():
                         ON CONFLICT (nick) DO UPDATE SET data = EXCLUDED.data
                     ''', (nick, Json(data)))
             conn.commit()
+        _last_save_err_log = 0
     except Exception as e:
-        print('[DB] save error:', e)
+        if time.time() - _last_save_err_log > 30:
+            print('[DB] save error:', e)
+            _last_save_err_log = time.time()
         try:
             with open(SAVE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(accounts, f, ensure_ascii=False, indent=2)
@@ -218,6 +224,7 @@ state = {
     'next_wall_id': 1, 'next_br_id': 1,
     'wall_timer': 2.0,
     'br_check_timer': 0.0,
+    'pvp_enabled': True,
 }
 lock = threading.Lock()
 
@@ -350,7 +357,7 @@ def new_player(sid, nick):
         'cost_10': COST_10_BASE,
         'prestige': 0,
         'income_multiplier': 1.0,
-        'wall_timer': 5.0,
+        'wall_timer': 3.0,
         'weapon_tier': 0,
         'armor_tier': 0,
         'has_shield': False,
@@ -368,6 +375,14 @@ def light_player(p):
     now = time.time()
     hp_max = get_hp_max(p)
     hp_cur = max(0, hp_max - p.get('damage_accum', 0))
+    carry_info = None
+    if p.get('carrying'):
+        br = p['carrying'][0]
+        carry_info = {
+            'value': br['value'],
+            'income': br['income'],
+            'sparkle': br.get('sparkle', False),
+        }
     return {
         'id': p['id'], 'name': p['name'],
         'x': round(p['x'], 2), 'z': round(p['z'], 2), 'y': round(p['y'], 2),
@@ -376,6 +391,7 @@ def light_player(p):
         'money': round(p['money'], 2),
         'income_sec': total_income(p),
         'carry_n': len(p['carrying']),
+        'carry_info': carry_info,
         'base_slots': p['base_slots'],
         'base_pads': pads,
         'base_upgrade_cost': p['base_upgrade_cost'],
@@ -432,7 +448,7 @@ def knockback_player(p):
 
 
 def spawn_wall_pack_near(x_center):
-    n = random.choices([1, 2, 3, 4], weights=[75, 20, 4, 1])[0]
+    n = random.choices([1, 2, 3, 4], weights=[65, 25, 8, 2])[0]
     types = random.sample(WALL_TYPES, n)
     base_x = x_center + 400
     for i, t in enumerate(types):
@@ -592,7 +608,6 @@ def step(dt):
             p['destroy_idx'] = -1
             p['destroy_t'] = 0
 
-    # спавн стен
     for p in state['players'].values():
         if not p['authenticated']:
             continue
@@ -600,7 +615,7 @@ def step(dt):
         if p['wall_timer'] <= 0:
             if len(state['walls']) < WALL_LIMIT:
                 spawn_wall_pack_near(p['x'])
-                p['wall_timer'] = 8.0 + random.random() * 6.0
+                p['wall_timer'] = 4.0 + random.random() * 4.0
             else:
                 p['wall_timer'] = 0.8
 
@@ -665,6 +680,7 @@ def step(dt):
         ],
         'pits': state['pits'][:80],
         'top': top,
+        'pvp_enabled': state.get('pvp_enabled', True),
     })
 
 
@@ -703,6 +719,7 @@ def build_state_payload():
         ],
         'pits': state['pits'][:80],
         'top': get_top(),
+        'pvp_enabled': state.get('pvp_enabled', True),
     }
 
 
@@ -750,6 +767,7 @@ def on_connect():
             'pad_z_start': PAD_Z_START, 'pad_z_step': PAD_Z_STEP,
             'weapons': WEAPONS,
             'armors': ARMORS,
+            'pvp_enabled': state.get('pvp_enabled', True),
         }, to=sid)
 
 
@@ -763,6 +781,8 @@ def on_attack(data):
     sid = request.sid
     target_id = data.get('target')
     with lock:
+        if not state.get('pvp_enabled', True):
+            return
         p = state['players'].get(sid)
         if not p or not p['authenticated']:
             return
@@ -909,6 +929,23 @@ def on_admin_auth(data):
             return {'ok': True}
         socketio.emit('toast', {'text': 'Неверный пароль', 'err': True}, to=sid)
         return {'ok': False, 'err': 'Неверный пароль'}
+
+
+@socketio.on('admin_toggle_pvp')
+def on_admin_toggle_pvp(data=None):
+    sid = request.sid
+    with lock:
+        p = state['players'].get(sid)
+        if not p or not p.get('is_admin'):
+            return {'ok': False, 'err': 'Нет доступа'}
+        if data and 'enabled' in data:
+            state['pvp_enabled'] = bool(data['enabled'])
+        else:
+            state['pvp_enabled'] = not state.get('pvp_enabled', True)
+        enabled = state['pvp_enabled']
+        socketio.emit('pvp_state', {'enabled': enabled})
+        socketio.emit('toast', {'text': f'PVP: {"ВКЛ" if enabled else "ВЫКЛ"}'})
+        return {'ok': True, 'enabled': enabled}
 
 
 @socketio.on('admin_list_nicks')

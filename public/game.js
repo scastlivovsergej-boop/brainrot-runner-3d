@@ -593,13 +593,16 @@ const mouseVec = new THREE.Vector2();
 
 window.__tryAttack = function(e) {
   if (!G.me) return;
+  if (G.serverData.pvp_enabled === false) {
+    if (window.showToast) window.showToast('🚫 PVP выключен', true);
+    return;
+  }
   const my = G.playerStates.get(G.me);
   if (!my) return;
   if (my.data.weapon_tier <= 0) return;
   mouseVec.x = (e.clientX / innerWidth) * 2 - 1;
   mouseVec.y = -(e.clientY / innerHeight) * 2 + 1;
   raycaster.setFromCamera(mouseVec, camera);
-  // Собираем все меши игроков кроме своего
   const targets = [];
   for (const [id, st] of G.playerStates) {
     if (id === G.me) continue;
@@ -607,12 +610,10 @@ window.__tryAttack = function(e) {
   }
   const hits = raycaster.intersectObjects(targets, true);
   if (hits.length === 0) return;
-  // Находим ближайшего игрока
   let hitObj = hits[0].object;
   while (hitObj && !hitObj.userData.playerId) hitObj = hitObj.parent;
   if (!hitObj) return;
   const targetId = hitObj.userData.playerId;
-  // Проверяем дистанцию (5м)
   const t = G.serverData.players[targetId];
   if (!t) return;
   const dx = my.data.x - t.x, dz = my.data.z - t.z;
@@ -622,6 +623,10 @@ window.__tryAttack = function(e) {
 
 window.__attackNearest = function() {
   if (!G.me) return;
+  if (G.serverData.pvp_enabled === false) {
+    if (window.showToast) window.showToast('🚫 PVP выключен', true);
+    return;
+  }
   const my = G.playerStates.get(G.me);
   if (!my) return;
   if (my.data.weapon_tier <= 0) return;
@@ -640,7 +645,6 @@ window.__attackNearest = function() {
 // ============================================================
 socket.on('player:stunned', (d) => {
   if (d.id === G.me) {
-    // собственное оглушение — просто вспышка
     const f = document.getElementById('flash');
     f.style.background = 'rgba(255,255,0,0.35)';
     setTimeout(() => f.style.background = 'rgba(231,76,60,0)', 300);
@@ -653,7 +657,6 @@ socket.on('player:stunned', (d) => {
 const camTarget = new THREE.Vector3(40, 10, 0);
 const camLook = new THREE.Vector3(60, 2.5, 0);
 
-// Для звёздочек — глобальное время
 let lastFrameTime = performance.now();
 
 function frame() {
@@ -697,6 +700,28 @@ function frame() {
       }
     } else if (halo) st.mesh.remove(halo);
 
+    // ============================================================
+    //  МЕТКА ВЕРИТИ В РУКАХ (carry label)
+    // ============================================================
+    let carryLbl = st.mesh.getObjectByName('carry');
+    const ci = st.data.carry_info;
+    if (ci) {
+      const txt = `+${fmt(ci.income)}/сек${ci.sparkle ? ' ✨' : ''}`;
+      if (!carryLbl || carryLbl.userData.lastTxt !== txt) {
+        if (carryLbl) st.mesh.remove(carryLbl);
+        const col = ci.sparkle ? '#c88aff' : '#ffe066';
+        const bg = ci.sparkle ? 'rgba(60,20,90,0.92)' : 'rgba(0,0,0,0.8)';
+        carryLbl = makeLabelSprite(txt, col, bg, 480, 110, 52);
+        carryLbl.name = 'carry';
+        carryLbl.userData.lastTxt = txt;
+        carryLbl.position.set(0, 4.8, 0);
+        carryLbl.scale.set(3.2, 0.75, 1);
+        st.mesh.add(carryLbl);
+      }
+    } else if (carryLbl) {
+      st.mesh.remove(carryLbl);
+    }
+
     // Щит — сфера
     let shieldMesh = st.mesh.getObjectByName('shield');
     if (st.data.shielded) {
@@ -711,27 +736,26 @@ function frame() {
       }
     } else if (shieldMesh) st.mesh.remove(shieldMesh);
 
-    // Оружие над головой
+    // ============================================================
+    //  ОРУЖИЕ НАД ГОЛОВОЙ — ИСПРАВЛЕНО (удаляется при tier=0)
+    // ============================================================
     let weaponLbl = st.mesh.getObjectByName('weapon');
-    if (!weaponLbl && (st.data.weapon_tier || 0) > 0) {
-      const wp = (G.weapons || [])[st.data.weapon_tier];
+    const curTier = st.data.weapon_tier || 0;
+    // Если иконка есть, но таер изменился — удалить
+    if (weaponLbl && (weaponLbl.userData.tier || 0) !== curTier) {
+      st.mesh.remove(weaponLbl);
+      weaponLbl = null;
+    }
+    // Если иконки нет и таер > 0 — создать заново
+    if (!weaponLbl && curTier > 0) {
+      const wp = (G.weapons || [])[curTier];
       if (wp) {
         weaponLbl = makeLabelSprite(wp.emoji, '#fff', 'rgba(0,0,0,0)', 200, 200, 140);
         weaponLbl.name = 'weapon';
+        weaponLbl.userData.tier = curTier;
         weaponLbl.position.set(0.9, 4.0, 0);
         weaponLbl.scale.set(1.2, 1.2, 1);
         st.mesh.add(weaponLbl);
-      }
-    } else if (weaponLbl && st.data.weapon_tier !== (weaponLbl.userData.tier || 0)) {
-      // Обновление не обязательно — картинка emoji разная. Проще пересоздать.
-      st.mesh.remove(weaponLbl);
-      const wp = (G.weapons || [])[st.data.weapon_tier];
-      if (wp && st.data.weapon_tier > 0) {
-        const nl = makeLabelSprite(wp.emoji, '#fff', 'rgba(0,0,0,0)', 200, 200, 140);
-        nl.name = 'weapon';
-        nl.position.set(0.9, 4.0, 0);
-        nl.scale.set(1.2, 1.2, 1);
-        st.mesh.add(nl);
       }
     }
 
@@ -765,7 +789,7 @@ function frame() {
         st.lastInfo = txt;
       }
 
-      // HP-бар (маленькая полоска)
+      // HP-бар
       let hpBar = st.mesh.getObjectByName('hpbar');
       const needsHp = (st.data.damage_accum || 0) > 0 && st.data.hp_max > 0;
       if (needsHp) {

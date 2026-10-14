@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Brainrot Runner 3D</title>
-<link rel="stylesheet" href="style.css?v=121">
+<link rel="stylesheet" href="style.css?v=122">
 <script src="/socket.io.min.js"></script>
 <script type="importmap">
 { "imports": { "three": "/three.module.js" } }
@@ -109,7 +109,7 @@ window.addEventListener('unhandledrejection', e => {
   </div>
 </div>
 
-<!-- АВТОРИЗАЦИЯ (без active — ui.js включит сам, если модули загрузятся) -->
+<!-- АВТОРИЗАЦИЯ -->
 <div id="authModal" class="modal-back">
   <div class="modal-inner">
     <h2>🎮 Вход в игру</h2>
@@ -239,6 +239,10 @@ window.addEventListener('unhandledrejection', e => {
         <button onclick="admCmd('set_password')">🔑</button>
       </div>
       <div class="admin-row">
+        <label>PVP (оглушение):</label>
+        <button id="admPvpToggle" onclick="admTogglePvp()" style="background:linear-gradient(180deg,#2ecc71,#27ae60)">✅ ВКЛ</button>
+      </div>
+      <div class="admin-row">
         <label>Сброс игрока:</label>
         <button onclick="admCmd('reset_player')" style="background:linear-gradient(180deg,#e74c3c,#c0392b);box-shadow:0 2px 0 #922b21">🗑 СБРОСИТЬ ВСЁ</button>
       </div>
@@ -298,6 +302,6 @@ window.addEventListener('unhandledrejection', e => {
 <div id="flash"></div>
 <div id="hitMsg">💥 Отбросило!</div>
 
-<script type="module" src="game.js?v=121"></script>
+<script type="module" src="game.js?v=122"></script>
 </body>
 </html>
